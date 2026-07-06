@@ -1,0 +1,41 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- Virtual environment ---
+venv/
+env/
+ENV/
+.venv/
+
+# --- Secrets (NEVER commit API keys) ---
+.env
+.env.local
+*.key
+
+# --- Private data ---
+contacts.csv
+contacts.json
+
+# --- Audio / test artifacts ---
+test.wav
+*.wav
+!models/**/*.wav
+
+# --- Models (large binaries, download on first run) ---
+models/wakeword/*.onnx
+models/tts/*.onnx
+models/tts/*.onnx.json
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- Logs ---
+*.log
+logs/

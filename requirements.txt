@@ -1,0 +1,9 @@
+# JARVIS — Python dependencies
+# Install with: pip install -r requirements.txt
+#
+# Phase 0: empty (no deps yet)
+# Phase 1 will add: sounddevice, numpy, faster-whisper, piper-tts
+# Phase 3 will add: openai, python-dotenv
+# Phase 4 will add: duckduckgo-search
+# Phase 5 will add: pywhatkit
+# Phase 6 will add: pystray
