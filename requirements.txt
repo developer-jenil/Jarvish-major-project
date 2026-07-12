@@ -2,8 +2,19 @@
 # Install with: pip install -r requirements.txt
 #
 # Phase 0: empty (no deps yet)
-# Phase 1 will add: sounddevice, numpy, faster-whisper, piper-tts
+# Phase 1: voice loop (mic + STT + TTS)
 # Phase 3 will add: openai, python-dotenv
 # Phase 4 will add: duckduckgo-search
 # Phase 5 will add: pywhatkit
 # Phase 6 will add: pystray
+
+# --- Audio capture (Phase 1) ---
+sounddevice==0.5.5
+numpy>=2.0
+
+# --- Speech-to-text (Phase 1) ---
+# faster-whisper pulls in ctranslate2, onnxruntime, huggingface-hub, etc.
+faster-whisper==1.2.1
+
+# --- Text-to-speech (Phase 1) ---
+piper-tts==1.4.2

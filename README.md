@@ -16,7 +16,7 @@ Currently in **Phase 0 — Setup**. See `.hermes/plans/2026-07-07_120000-jarvis-
 pip install -r requirements.txt
 
 # Run the assistant (only works after Phase 1)
-python jarvis.py
+python main.py
 ```
 
 ## Tech stack
