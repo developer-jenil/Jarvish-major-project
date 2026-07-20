@@ -6,5 +6,6 @@ Submodules:
     tts       — text-to-speech (Piper)        (Phase 1)
     wakeword  — "Hey Jarvis" detection        (Phase 2)
     brain     — LLM brain (OpenRouter API)    (Phase 2)
-    skills    — actions like open-app, email  (Phase 3, in progress)
+    skills    — actions like open-app, email  (Phase 3)
+                  open_app — "open any app" skill (DONE, offline)
 """

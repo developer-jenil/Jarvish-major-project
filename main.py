@@ -24,9 +24,12 @@ One-time setup before the first run:
 What's already built:
 - Phase 1: mic capture + Whisper STT + Piper TTS   (jarvis/audio, stt, tts)
 - Phase 2: wake word + LLM brain                    (jarvis/wakeword, brain)
+- Phase 3: "open any app" skill                     (jarvis/skills/open_app)
+           Runs OFFLINE (no API key) and is checked before the brain, so
+           "open chrome" never wastes an LLM call.
 
 What we'll add later:
-- Phase 3: skills (open apps, WhatsApp, Gmail email)
+- Phase 3: more skills (WhatsApp, Gmail email)
 - Phase 4: web search + longer conversation memory
 - Phase 6: system tray icon
 """
@@ -36,6 +39,7 @@ from jarvis.audio import record
 from jarvis.stt import transcribe
 from jarvis.tts import speak
 from jarvis.wakeword import listen_for_wakeword
+from jarvis.skills.open_app import try_open_app
 
 # How many seconds to record after the wake word fires. Long enough for a
 # full command ("open chrome and search for cats"), short enough to feel
@@ -55,12 +59,26 @@ MAX_HISTORY_TURNS = 6  # keep the last 6 messages (3 back-and-forths)
 
 
 def handle_command(text: str) -> None:
-    """Send one transcribed command to the brain and speak the reply."""
+    """Send one transcribed command to the right handler and speak back.
+
+    Order matters: we try the offline "open any app" skill FIRST, because it
+    is fast, free, and does not need an API key. Only if the command is not an
+    app-launch do we fall through to the LLM brain.
+    """
     global _history
 
     print(f"[main] you said: {text!r}")
 
-    # Ask the LLM, giving it the recent history for context.
+    # 1. SKILL (offline): "open chrome", "open youtube and play ...", etc.
+    #    try_open_app() returns (handled, message). If handled is True it
+    #    already launched the app, so we just say the confirmation and stop.
+    handled, skill_message = try_open_app(text)
+    if handled:
+        print(f"[main] skill: open-app -> {skill_message}")
+        speak(skill_message)
+        return
+
+    # 2. BRAIN (needs API key): general questions / conversation.
     reply = brain.ask(text, history=_history)
 
     # brain.ask() returns a "[brain] ..." string when something went wrong
