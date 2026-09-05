@@ -12,9 +12,9 @@ voice, for example:
     "start spotify"
 
 It works ENTIRELY OFFLINE — no internet call, no API key, no LLM needed.
-It uses only the Python standard library (os.startfile + subprocess via the
-Windows `start` command). That makes it fast and a strong selling point for
-the project review: not every skill has to go through the LLM brain.
+It uses only the Python standard library (os.startfile + subprocess in
+list form, NEVER shell=True). That makes it fast and a strong selling point
+for the project review: not every skill has to go through the LLM brain.
 
 WHY A SEPARATE SKILL (and why it runs BEFORE the brain)?
 - Skills are small, single-purpose actions. The "open app" skill is purely
@@ -182,6 +182,78 @@ _FILLER_RE = re.compile(r"^(?:the|my|please|pls|jarvis|a|an|up|me|bahut|ek)\s+",
 # Trailing punctuation Whisper sometimes leaves on the end of a command.
 _TRAIL_PUNCT_RE = re.compile(r"[.,!?;:]+$")
 
+# --- Security: input validation ------------------------------------------
+#
+# Voice input is attacker-controlled (anyone can speak to the mic, or a
+# recording can be played). We MUST treat every target string as untrusted
+# and refuse anything that could break out of an os.startfile / subprocess
+# call. Two layers of defence:
+#
+#   1. SHELL_METACHARS  — any target containing these is REJECTED outright.
+#                         This blocks "open foo & calc", "open foo; rm -rf",
+#                         "open foo && del /q", "open $(...)", etc.
+#   2. SAFE_URL_SCHEMES — the auto-URL branch only accepts http(s). It
+#                         explicitly REJECTS javascript:, file:, data:,
+#                         vbscript:, about:, etc., so a spoken "open
+#                         javascript:alert(1)" cannot trigger a URI handler.
+SHELL_METACHARS = set('"&|<>^`(){};\\\'`\n\r\t$*?[]')
+SAFE_URL_SCHEMES = ("http://", "https://")
+
+
+def _is_safe_app_target(name: str) -> bool:
+    """True iff `name` is a bare exe/URI name we are willing to launch.
+
+    Blocks anything with shell metacharacters, anything that contains a
+    space (multi-word args are NOT allowed through os.startfile), and
+    anything that does not match a known safe pattern.
+    """
+    if not name:
+        return False
+    if any(c in SHELL_METACHARS for c in name):
+        return False
+    if " " in name:
+        return False
+    return True
+
+
+def _is_safe_url(url: str) -> bool:
+    """True iff `url` is an http(s) URL we are willing to open.
+
+    The check is "starts with http:// or https://" AND does not then contain
+    another scheme prefix. This blocks the prefix-injection case where a
+    user says "open file:///..." and resolve_target would otherwise produce
+    "https://file:///..." which is technically a https:// URL but is junk.
+    """
+    if not url:
+        return False
+    lowered = url.lower().strip()
+    if not any(lowered.startswith(scheme) for scheme in SAFE_URL_SCHEMES):
+        return False
+    # Strip the scheme prefix; what remains must be a normal host[/path],
+    # not another scheme (which would mean someone put a "https://" in front
+    # of e.g. "file:///..." or "javascript:...").
+    remainder = lowered
+    for scheme in SAFE_URL_SCHEMES:
+        if remainder.startswith(scheme):
+            remainder = remainder[len(scheme):]
+            break
+    # remainder must start with a hostname character (letter/digit) or
+    # contain a dot before any colon that could be another scheme.
+    if not remainder or remainder[0] in ":/?#":
+        return False
+    # Anything with a colon before the first slash is suspicious (could be
+    # `host:port`, which is OK, OR a nested scheme like `file:`).
+    # We allow a single colon only if followed by digits (port) and only
+    # before any "/".
+    first_slash = remainder.find("/")
+    head = remainder if first_slash == -1 else remainder[:first_slash]
+    if ":" in head:
+        # exactly one colon, and the part after is digits (port) — OK.
+        host, _, port = head.partition(":")
+        if not port.isdigit():
+            return False
+    return True
+
 
 # --- Helpers -------------------------------------------------------------
 
@@ -222,49 +294,74 @@ def resolve_target(name: str) -> tuple[str, str, str | None]:
         return "site", base, tmpl
 
     # 3. Something that already looks like a web address (e.g. "github.com",
-    #    "openai.com/blog"). Open it as a URL.
+    #    "openai.com/blog"). Open it as a URL — but ONLY if it is a safe
+    #    http(s) target. javascript:, file:, data:, vbscript:, etc. are
+    #    explicitly rejected so a malicious voice command cannot trigger
+    #    a URI handler.
     if "." in key and " " not in key:
-        url = key if key.startswith("http") else "https://" + key
-        return "site", url, None
+        url = key if key.startswith(("http://", "https://")) else "https://" + key
+        if _is_safe_url(url):
+            return "site", url, None
+        # Looks URL-shaped but starts with a dangerous scheme — refuse.
+        return "app", "", None  # empty target will fail downstream safely
 
-    # 4. Unknown name: best-effort. Let the Windows shell try to resolve the
-    #    literal word (covers apps/scripts not in our map). The launcher will
-    #    report a friendly failure if Windows can't find it.
+    # 4. Unknown name: best-effort. We still return ("app", key, None) so
+    #    that the caller's _shell_open will validate; if `key` has any
+    #    shell metacharacters, _is_safe_app_target will reject it there.
     return "app", key, None
 
 
 def _shell_open(target: str, arg: str | None = None) -> bool:
-    """Open `target` on Windows.
+    """Open `target` on Windows, after validating it against an allowlist.
 
-    `target` may be an app/executable name, a file path, a URL, or a URI
-    scheme (ms-settings:). `arg` (optional) is passed through to the program
-    — e.g. a URL to open in a specific browser ("chrome", url).
+    `target` may be an app/executable name (from our APPS map) or an http(s)
+    URL (from our WEBSITES map or a user-typed domain). It is NEVER raw user
+    input that has not been through `_is_safe_app_target` / `_is_safe_url`.
 
-    Uses os.startfile (ShellExecute) for single targets, and the `start`
-    shell command when arguments must be forwarded. Returns True on success.
+    `arg` (optional) is a URL to open in `target` (browser-with-search case).
+    It is also validated.
+
+    Returns True on success. Both code paths (os.startfile for a single
+    target, subprocess.Popen with a list for target+arg) use shell=False so
+    the cmd.exe metacharacter injection vector is closed.
+
+    Note: this intentionally does NOT fall back to a free-form `start "" "X"`
+    shell call. If validation fails, we refuse; that is the whole point.
     """
-    if arg:
-        # Need to pass an argument -> `start` resolves the exe and forwards it.
-        cmd = f'start "" "{target}" "{arg}"'
-        runner = lambda: subprocess.Popen(cmd, shell=True)  # noqa: E731
-    else:
-        # Single target: os.startfile handles apps, files, URLs, URI schemes.
-        runner = lambda: os.startfile(target)  # noqa: E731
-
-    try:
-        runner()
-        return True
-    except Exception as e:  # pragma: no cover - environment dependent
-        print(f"[open_app] could not open {target!r}: {e}")
-
-    # Last-ditch fallback: try `start` even for a single target.
-    if not arg:
+    # Validate before doing anything.
+    if arg is not None:
+        if not _is_safe_app_target(target):
+            print(f"[open_app] refused: target {target!r} failed safety check")
+            return False
+        if not _is_safe_url(arg):
+            print(f"[open_app] refused: arg {arg!r} is not an http(s) URL")
+            return False
+        # List-form subprocess: no shell, so metacharacters in either string
+        # would have to bypass Windows' own CreateProcess parsing.
         try:
-            subprocess.Popen(f'start "" "{target}"', shell=True)
+            subprocess.Popen([target, arg], shell=False)
             return True
-        except Exception as e2:  # pragma: no cover
-            print(f"[open_app] fallback also failed for {target!r}: {e2}")
-    return False
+        except (FileNotFoundError, OSError) as e:
+            print(f"[open_app] could not launch {target!r} {arg!r}: {e}")
+            return False
+    else:
+        # Single target: either a known app name or a known URL.
+        if _is_safe_url(target):
+            try:
+                os.startfile(target)  # ShellExecuteW with an http(s) URL is safe.
+                return True
+            except OSError as e:
+                print(f"[open_app] could not open URL {target!r}: {e}")
+                return False
+        if _is_safe_app_target(target):
+            try:
+                os.startfile(target)  # ShellExecuteW with a bare exe name is safe.
+                return True
+            except OSError as e:
+                print(f"[open_app] could not open {target!r}: {e}")
+                return False
+        print(f"[open_app] refused: target {target!r} failed safety check")
+        return False
 
 
 def _build_search(template: str, query: str) -> str:
@@ -330,6 +427,12 @@ def try_open_app(text: str, dry_run: bool = False) -> tuple[bool, str]:
     target, query = parsed
     kind, value, tmpl = resolve_target(target)
 
+    # Defence-in-depth: if resolve_target refused the target (returned an
+    # empty value because the URL was dangerous), speak a friendly refusal
+    # instead of trying to launch "".
+    if not value:
+        return True, f"Sorry, I cannot open {target}. The name or address looks unsafe."
+
     # --- Browser + search query: open that browser straight to Google. ---
     if query and target in BROWSERS and kind == "app":
         url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
@@ -353,6 +456,8 @@ def try_open_app(text: str, dry_run: bool = False) -> tuple[bool, str]:
     # --- Website (with optional search template). ----------------------
     if kind == "site":
         to_open = _build_search(tmpl, query) if (tmpl and query) else value
+        if not _is_safe_url(to_open):
+            return True, f"Sorry, I cannot open {target}. The address is not a safe http(s) URL."
         if dry_run:
             print(f"[open_app][dry-run] would open URL: {to_open}")
         else:
@@ -362,6 +467,8 @@ def try_open_app(text: str, dry_run: bool = False) -> tuple[bool, str]:
         return True, f"Opening {target}."
 
     # --- Plain app. -----------------------------------------------------
+    if not _is_safe_app_target(value):
+        return True, f"Sorry, I cannot open {target}. The name contains characters I will not run."
     if dry_run:
         print(f"[open_app][dry-run] would launch app: {value!r}")
         return True, f"Opening {target}."
@@ -392,6 +499,11 @@ if __name__ == "__main__":
             "open my file explorer",
             "open github.com",
             "tell me a joke",          # should NOT be handled
+            # Security regression cases — each MUST be refused:
+            "open chrome & calc & notepad",                 # shell metachars
+            "open calc && del /f /q C:\\\\",                # cmd.exe injection
+            "open javascript:alert(1)",                      # dangerous URL scheme
+            "open file:///C:/Users/Asus/secrets.txt",        # file: scheme
         ]
         print("[selftest] checking intent parsing (dry-run)...")
         for s in samples:
@@ -407,7 +519,27 @@ if __name__ == "__main__":
         assert match_intent("tell me a joke") is None
         assert try_open_app("open notepad", dry_run=True)[0] is True
         assert try_open_app("what is the time", dry_run=True)[0] is False
-        print("[selftest] PASS — open-app parsing works.")
+        # Security: malicious commands are recognised as open-app intents
+        # (so we control the reply) but the spoken message MUST be a refusal
+        # — it must NOT contain "Opening" for these.
+        for bad in [
+            "open chrome & calc & notepad",
+            "open calc && del /f /q C:\\\\",
+            "open javascript:alert(1)",
+            "open file:///C:/Users/Asus/secrets.txt",
+        ]:
+            handled, msg = try_open_app(bad, dry_run=True)
+            assert handled, f"malicious command {bad!r} was NOT handled"
+            assert "Opening" not in msg, (
+                f"malicious command {bad!r} produced a launch message: {msg!r}")
+        # Low-level safety: the helper must reject anything with metachars.
+        assert _is_safe_app_target("chrome") is True
+        assert _is_safe_app_target("chrome & calc") is False
+        assert _is_safe_app_target("calc; rm -rf /") is False
+        assert _is_safe_url("https://example.com") is True
+        assert _is_safe_url("javascript:alert(1)") is False
+        assert _is_safe_url("file:///C:/x") is False
+        print("[selftest] PASS — open-app parsing + safety checks work.")
 
     elif "--dry-run" in flags:
         # Show what WOULD open, without launching anything.

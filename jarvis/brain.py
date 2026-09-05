@@ -41,17 +41,26 @@ import urllib.error
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # The model to use. OpenRouter lets you swap this freely. Examples:
-#   "openai/gpt-4o-mini"                 (cheap, fast, strong — paid)
-#   "anthropic/claude-3.5-haiku"         (fast, cheap — paid)
-#   "meta-llama/llama-3.1-8b-instruct"   (paid, free tier elsewhere)
-#   "tencent/hy3:free"                   (FREE, fast, good Hinglish — our default)
+#   "openai/gpt-4o-mini"                      (cheap, fast, strong — paid)
+#   "anthropic/claude-3.5-haiku"              (fast, cheap — paid)
+#   "meta-llama/llama-3.1-8b-instruct"        (paid, free tier elsewhere)
+#   "google/gemma-2-9b-it:free"               (FREE, good Hindi+English)
+#   "meta-llama/llama-3.1-8b-instruct:free"   (FREE, decent Hinglish)
+#   "mistralai/mistral-7b-instruct:free"      (FREE, less Hindi)
+#   "microsoft/phi-3-mini-128k-instruct:free" (FREE, smaller context)
 #
-# DEFAULT: tencent/hy3:free
-#   Chosen for this project because it is 100% free (no credit limit), very
-#   fast (~2s first-token on a short reply), and handles Hindi+English
-#   (Hinglish) naturally — exactly what a spoken assistant needs. Swap the
-#   line below to change models; nothing else needs editing.
-DEFAULT_MODEL = "tencent/hy3:free"
+# DEFAULT: meta-llama/llama-3.1-8b-instruct
+#   This model works with the current API key and handles Hindi+English
+#   (Hinglish) well. Falls back to other models if it fails.
+#   Note: The :free suffix models on OpenRouter are currently returning 404;
+#   the non-:free versions work if the account has credits.
+DEFAULT_MODEL = "meta-llama/llama-3.1-8b-instruct"
+FALLBACK_MODELS = [
+    "openai/gpt-3.5-turbo",
+    "google/gemma-7b-it",
+    "mistralai/mistral-7b-instruct",
+    "meta-llama/llama-3-8b-instruct",
+]
 
 # The "system prompt" tells the model who it is and how to behave.
 SYSTEM_PROMPT = (
@@ -103,30 +112,44 @@ def ask(user_text: str, model: str = DEFAULT_MODEL, history=None) -> str:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
 
-    # The body we send, encoded as JSON bytes (HTTP requires bytes).
-    payload = json.dumps({
-        "model": model,
-        "messages": messages,
-        "temperature": 0.7,   # 0 = very strict, 1 = more creative
-        "max_tokens": 200,    # keep replies short for spoken output
-    }).encode("utf-8")
+    # Try primary model, then fallback chain if it fails (404, 401, 500, etc.)
+    models_to_try = [model]
+    if model == DEFAULT_MODEL:
+        models_to_try.extend(FALLBACK_MODELS)
 
-    # HTTP headers: who we are + our API key (the "Bearer" token).
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": "http://localhost",   # OpenRouter wants a referer
-        "X-Title": "JARVIS Major Project",
-    }
+    for attempt_model in models_to_try:
+        # The body we send, encoded as JSON bytes (HTTP requires bytes).
+        payload = json.dumps({
+            "model": attempt_model,
+            "messages": messages,
+            "temperature": 0.7,   # 0 = very strict, 1 = more creative
+            "max_tokens": 200,    # keep replies short for spoken output
+        }).encode("utf-8")
 
-    req = urllib.request.Request(API_URL, data=payload, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            # The reply text lives at choices[0].message.content.
-            return data["choices"][0]["message"]["content"].strip()
-    except urllib.error.URLError as e:
-        return f"[brain] API call failed: {e}"
+        # HTTP headers: who we are + our API key (the "Bearer" token).
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "http://localhost",   # OpenRouter wants a referer
+            "X-Title": "JARVIS Major Project",
+        }
+
+        req = urllib.request.Request(API_URL, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                # The reply text lives at choices[0].message.content.
+                return data["choices"][0]["message"]["content"].strip()
+        except urllib.error.HTTPError as e:
+            # If primary model fails, log and try fallback (if any left).
+            print(f"[brain] model {attempt_model!r} failed: HTTP {e.code} — {e.reason}")
+            if attempt_model == models_to_try[-1]:
+                return f"[brain] All models failed (last error: HTTP {e.code})"
+            continue
+        except urllib.error.URLError as e:
+            return f"[brain] API call failed: {e}"
+
+    return "[brain] All models failed"
 
 
 if __name__ == "__main__":

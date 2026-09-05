@@ -36,7 +36,8 @@ from". Member 3 owns downloading, versioning, and swapping these.
 ## 3. LLM Brain (cloud)
 
 - **Engine:** OpenRouter Chat Completions API (OpenAI-compatible)
-- **Default model:** `openai/gpt-4o-mini` (swappable — see `jarvis/brain.py`)
+- **Default model:** `meta-llama/llama-3.1-8b-instruct` (works with current API key, good Hindi+English)
+- **Fallback models:** `openai/gpt-3.5-turbo`, `google/gemma-7b-it`, `mistralai/mistral-7b-instruct`, `meta-llama/llama-3-8b-instruct`
 - **Requires:** internet + an API key in `.env` (`OPENROUTER_API_KEY`)
 - **Integrated by:** `jarvis/brain.py` (Member 2's module)
 - **Managed by:** Member 3 tracks which model is active and its limits/cost

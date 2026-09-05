@@ -49,8 +49,10 @@ FRAME_SAMPLES = 1280  # 80 ms * 16000 Hz
 
 # The score (0.0–1.0) above which we declare "wake word heard". 0.5 is the
 # openWakeWord default. Raise it (e.g. 0.6) if you get false triggers;
-# lower it (e.g. 0.4) if it is not catching your voice.
-DEFAULT_THRESHOLD = 0.5
+# lower it (e.g. 0.35) if it is not catching your voice. On this Windows
+# machine we run at 0.35 because the headset mic is slightly quieter than
+# ideal at typical speaking volume.
+DEFAULT_THRESHOLD = 0.35
 
 # The prebuilt model we use. openWakeWord ships this exact one for free.
 WAKEWORD_NAME = "hey jarvis"

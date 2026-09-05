@@ -12,6 +12,11 @@ ENV/
 .venv/
 
 # --- Secrets (NEVER commit API keys) ---
+# IMPORTANT: This is gitignored, but if the project lives under a cloud-sync
+# folder (e.g. OneDrive/Desktop/Dropbox), the .env file is STILL auto-uploaded
+# to that cloud. Treat any key placed in .env as compromised and rotate it.
+# Prefer OS-level secret stores (Windows Credential Manager via the `keyring`
+# library) for anything more sensitive than a free-tier demo key.
 .env
 .env.local
 *.key

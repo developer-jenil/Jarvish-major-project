@@ -13,20 +13,22 @@ that's how Indians actually talk in real recordings.
 Model size options (as of 2026):
   tiny    ~ 75 MB, fastest,  ~70% accuracy
   base    ~150 MB, fast,     ~75% accuracy
-  small   ~460 MB, balanced, ~82% accuracy  <-- our default
-  medium  ~1.5 GB, slow,     ~86% accuracy
+  small   ~460 MB, balanced, ~82% accuracy
+  medium  ~1.5 GB, slow,     ~86% accuracy  <-- our default (much better Hindi)
   large   ~3.0 GB, slowest,  ~89% accuracy
 
-For a CPU-only PC with 16 GB RAM, "small" is the sweet spot. We can
-upgrade to "medium" in Phase 7 if you want better Hindi.
+We use "medium" for noticeably better Hindi/Hinglish accuracy than "small".
+The trade-off is a larger ~1.5 GB download and slower transcription on a
+CPU-only PC. If speed matters more than accuracy, switch back to "small".
 """
 
 import numpy as np
 from faster_whisper import WhisperModel
 
-# Default model size. Change to "medium" or "large-v3" if you want more
-# accuracy and don't mind the extra load time.
-DEFAULT_MODEL_SIZE = "small"
+# Default model size. We use "medium" for much better Hindi/Hinglish
+# accuracy. (Change to "small" for a faster, smaller, less accurate model,
+# or "large-v3" for the most accurate — but that is very slow on CPU.)
+DEFAULT_MODEL_SIZE = "medium"
 
 # Compute type. "int8" = uses 8-bit integers internally, ~half the RAM,
 # negligible accuracy loss on CPU. If you have a GPU, change to "float16".
@@ -42,7 +44,7 @@ def _get_model() -> WhisperModel:
     global _model
     if _model is None:
         print(f"[stt] loading Whisper '{DEFAULT_MODEL_SIZE}' model...")
-        print("[stt] (first run downloads the model — ~460 MB, may take a few minutes)")
+        print("[stt] (first run downloads the model — ~1.5 GB, may take a few minutes)")
         _model = WhisperModel(
             DEFAULT_MODEL_SIZE,
             device="cpu",              # change to "cuda" if you have an NVIDIA GPU
@@ -87,8 +89,18 @@ def transcribe(audio: np.ndarray, language: str | None = None) -> str:
     text = " ".join(segment.text.strip() for segment in segments).strip()
 
     if info.language:
-        print(f"[stt] detected language: {info.language} (prob {info.language_probability:.2f})")
-    print(f"[stt] -> {text!r}")
+        # Windows console (cp1252) can't print Devanagari — guard it.
+        lang_display = info.language
+        try:
+            print(f"[stt] detected language: {lang_display} (prob {info.language_probability:.2f})")
+        except UnicodeEncodeError:
+            print(f"[stt] detected language: {lang_display} (prob {info.language_probability:.2f})")
+    # Same guard for the transcribed text
+    try:
+        print(f"[stt] -> {text!r}")
+    except UnicodeEncodeError:
+        # Print repr-safe version
+        print(f"[stt] -> {text.encode('ascii', 'backslashreplace').decode()} (Unicode chars redacted)")
     return text
 
 

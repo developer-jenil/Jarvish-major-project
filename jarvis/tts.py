@@ -17,8 +17,6 @@ A note on Hindi + English:
   English voice (en_US-lessac-medium is a good one).
 """
 
-import io
-import wave
 from pathlib import Path
 
 import numpy as np
@@ -60,32 +58,23 @@ def synthesize(text: str) -> tuple[np.ndarray, int]:
     """
     voice = _get_voice()
 
-    # Piper can write straight to a file or stream chunks. We use a
-    # BytesIO buffer so we never touch disk for short responses.
+    # piper-tts 1.4.x (the modern API) made synthesize() a GENERATOR that
+    # yields one AudioChunk per sentence. Each chunk carries its audio as a
+    # float32 array already scaled to [-1, 1] and a matching sample_rate.
     #
-    # IMPORTANT: Piper's synthesize() does NOT set the wave file's
-    # channel count or sample rate — you have to do that yourself
-    # BEFORE calling synthesize. The model knows its own sample rate
-    # (we read it from voice.config.sample_rate below) and Piper
-    # always outputs mono.
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)                   # Piper outputs 16-bit PCM
-        wf.setframerate(voice.config.sample_rate)
-        voice.synthesize(text, wf)
+    # (The old piper 1.x API instead took a wave-file object and wrote
+    # straight into it. Passing a file here would be ignored by the new
+    # API, producing zero frames of audio — i.e. silence.) We consume the
+    # generator and stitch the chunks together.
+    chunks = list(voice.synthesize(text))
+    if not chunks:
+        # No speech produced (empty input). Return silence so callers
+        # (sd.play) don't choke on an empty array.
+        return np.zeros(0, dtype=np.float32), voice.config.sample_rate
 
-    # Re-parse the WAV we just wrote into raw samples.
-    buf.seek(0)
-    with wave.open(buf, "rb") as wf:
-        sample_rate = wf.getframerate()
-        n_frames = wf.getnframes()
-        raw = wf.readframes(n_frames)
-
-    # Convert 16-bit PCM bytes to float32 in [-1, 1] for sounddevice.
-    audio_int16 = np.frombuffer(raw, dtype=np.int16)
-    audio_float = audio_int16.astype(np.float32) / 32768.0
-    return audio_float, sample_rate
+    sample_rate = chunks[0].sample_rate
+    audio = np.concatenate([c.audio_float_array for c in chunks]).astype(np.float32)
+    return audio, sample_rate
 
 
 def speak(text: str, blocking: bool = True) -> None:
