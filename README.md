@@ -4,7 +4,14 @@ A "Hey Jarvis" personal voice assistant for Windows. Wakes on a custom hotword, 
 
 ## Status
 
-Currently in **Phase 1 — Voice loop** (microphone capture, speech-to-text, and text-to-speech are implemented and run locally). The full development plan and team roles are tracked in the project discussion notes (`19 july major project discussion.md` on the Desktop).
+**Phase 3 — Skills (in progress).** The voice loop, wake word, and LLM brain are done and run locally, and the first skill — **"open any app"** — is implemented. The full development plan and team roles are tracked in the project discussion notes (`19 july major project discussion.md` on the Desktop).
+
+### What works today
+- "Hey Jarvis" wake word (local, OpenWakeWord)
+- Speech-to-text (faster-whisper, Hindi + English)
+- LLM brain (OpenRouter cloud API — `tencent/hy3:free` by default)
+- Text-to-speech (Piper, offline)
+- **Open-any-app skill** — say e.g. *"open chrome"*, *"open notepad"*, *"open youtube and play despacito"*, *"open google and search for weather in mumbai"*, *"kholo calculator"*. Runs **offline** (no API key) and is checked before the brain.
 
 ## Quick start (developer)
 
@@ -32,12 +39,29 @@ python main.py
 
 1. Setup
 2. Voice round-trip  (done — mic + STT + TTS)
-3. "Hey Jarvis" wake word
-4. LLM brain + open-app skill
-5. Web search + memory
-6. WhatsApp messaging
-7. Gmail email (subject / To / BCC + AI-written content)
-8. Polish + system tray
+3. "Hey Jarvis" wake word  (done)
+4. LLM brain  (done)
+5. Skills
+   - **Open-any-app**  (done — offline, see `jarvis/skills/open_app.py`)
+   - WhatsApp messaging  (to do)
+   - Gmail email (subject / To / BCC + AI-written content)  (to do)
+6. Web search + memory  (to do)
+7. Polish + system tray  (to do)
+
+## Open-any-app skill
+
+`jarvis/skills/open_app.py` is a self-contained, offline skill. It recognises
+"open/launch/start/run" commands (plus Hinglish verbs like *kholo* / *chalao*),
+resolves the spoken name to a known app, website, or search, and launches it via
+the Windows shell. Optional "and search for / play ..." queries open a site
+search or a Google search.
+
+Test it without launching anything:
+
+```powershell
+python -m jarvis.skills.open_app --selftest
+python -m jarvis.skills.open_app --dry-run "open youtube and play despacito"
+```
 
 ## License
 

@@ -4,6 +4,8 @@
 # Phase 0: empty (no deps yet)
 # Phase 1: voice loop (mic + STT + TTS)          [DONE]
 # Phase 2: wake word ("Hey Jarvis") + LLM brain  [DONE]
+# Phase 3: "open any app" skill                  [DONE]  (uses only stdlib:
+#           os.startfile + subprocess, NO new deps)
 # Phase 4 will add: duckduckgo-search
 # Phase 5 will add: pywhatkit
 # Phase 6 will add: pystray
