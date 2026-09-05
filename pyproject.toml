@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "sounddevice==0.5.5",
-    "numpy>=1.26.0",
+    "numpy>=1.26.0,<2",
     "faster-whisper==1.2.1",
     "piper-tts==1.4.2",
     "openwakeword==0.6.0",
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-jarvis = "main:main"
+jarvis = "jarvis.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

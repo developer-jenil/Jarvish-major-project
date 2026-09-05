@@ -32,16 +32,23 @@ python -m jarvis.wakeword --download
 
 # Set up your .env file (copy .env.example, fill in the values)
 
+# ===================================================
+# 🚀 LAUNCH THE NEURAL WEB DASHBOARD (NO TERMINAL NEEDED)
+# ===================================================
+# Double-click 'run_jarvis_ui.bat' or run:
+python launch_ui.py
+# (Automatically opens http://localhost:5000 in your browser)
+
 # Run full project health check & test suite verification
 python build_and_verify.py
 
-# Or run unit tests directly
+# Or run unit tests directly (31 automated tests)
 python -m unittest discover -s tests
 
 # Build distribution packages (.whl and .tar.gz)
 python -m build
 
-# Run the assistant (console mode)
+# Or run in classic console mode
 python main.py
 
 # Or run in system-tray mode

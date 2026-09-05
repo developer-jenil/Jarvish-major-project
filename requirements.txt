@@ -6,13 +6,13 @@
 # Phase 2: wake word ("Hey Jarvis") + LLM brain  [DONE]
 # Phase 3: "open any app" skill                  [DONE]  (uses only stdlib:
 #           os.startfile + subprocess, NO new deps)
-# Phase 3 (continued): WhatsApp + Gmail email   [DONE] (pywhatkit + SMTP)
+# Phase 3 (continued): WhatsApp + Gmail email   [DONE] (deep-link + SMTP)
 # Phase 4: web search (duckduckgo-search)        [DONE]
 # Phase 6: system tray (pystray)                 [DONE]
 
 # --- Audio capture (Phase 1) ---
 sounddevice==0.5.5
-numpy>=2.0
+numpy>=1.26.0,<2
 
 # --- Speech-to-text (Phase 1) ---
 # faster-whisper pulls in ctranslate2, onnxruntime, huggingface-hub, etc.
@@ -31,13 +31,6 @@ openwakeword==0.6.0
 # Lets jarvis/brain.py read OPENROUTER_API_KEY from a local .env file.
 # The brain itself uses only the standard library (urllib) to call the API.
 python-dotenv==1.2.2
-
-# --- WhatsApp skill (Phase 3 continued) ---
-# pywhatkit opens WhatsApp Web with a pre-filled message. Requires an
-# active internet connection and an existing WhatsApp Web session. The user
-# reviews the pre-filled message and clicks Send — full automation would
-# need Selenium which is too heavy for this project.
-pywhatkit>=5.4
 
 # --- Web search skill (Phase 4) ---
 # Uses the local DDG server protocol (no browser). Async methods require an

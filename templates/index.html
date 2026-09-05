@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>J.A.R.V.I.S. // Mark IV Neural Command HUD</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="theme-dark">
+  <div class="hud-background">
+    <div class="grid-overlay"></div>
+    <div class="vignette"></div>
+    <div class="ambient-glow glow-1"></div>
+    <div class="ambient-glow glow-2"></div>
+  </div>
+
+  <div class="app-container">
+    <!-- Top HUD Telemetry Bar -->
+    <header class="hud-header" id="hudHeader">
+      <div class="hud-brand">
+        <div class="brand-reactor-icon">
+          <div class="mini-ring"></div>
+          <div class="mini-core"></div>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">J.A.R.V.I.S.</span>
+          <span class="brand-sub">NEURAL OPERATING INTERFACE // MK-IV</span>
+        </div>
+      </div>
+
+      <div class="telemetry-badges">
+        <div class="badge badge-pulse" id="badgeSystem">
+          <span class="badge-dot"></span>
+          <span class="badge-label">SYSTEM</span>
+          <span class="badge-val">ONLINE</span>
+        </div>
+        <div class="badge" id="badgeSTT">
+          <span class="badge-icon">🎙️</span>
+          <span class="badge-label">STT</span>
+          <span class="badge-val">WHISPER</span>
+        </div>
+        <div class="badge" id="badgeTTS">
+          <span class="badge-icon">🔊</span>
+          <span class="badge-label">TTS</span>
+          <span class="badge-val">PIPER HINDI/EN</span>
+        </div>
+        <div class="badge" id="badgeBrain">
+          <span class="badge-icon">🧠</span>
+          <span class="badge-label">BRAIN</span>
+          <span class="badge-val" id="brainStatus">LLAMA-3.1</span>
+        </div>
+      </div>
+
+      <div class="hud-controls">
+        <button class="toggle-btn" id="wakewordToggleBtn" title="Toggle 'Hey Jarvis' hotword background listener">
+          <span class="toggle-icon">⚡</span>
+          <span class="toggle-label">HOTWORD: <b id="wakewordStatusText">OFF</b></span>
+        </button>
+        <button class="icon-btn" id="audioMuteBtn" title="Toggle audio spoken response">
+          <span id="audioMuteIcon">🔊</span>
+        </button>
+        <div class="clock-display" id="hudClock">00:00:00</div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Grid -->
+    <main class="hud-main">
+      <!-- Left / Center: Interactive Command Deck -->
+      <section class="command-deck">
+        <!-- Holographic Arc Reactor Visualizer -->
+        <div class="reactor-card">
+          <div class="reactor-container" id="reactorContainer">
+            <div class="ring outer-ring"></div>
+            <div class="ring track-ring"></div>
+            <div class="ring segmented-ring"></div>
+            <div class="ring counter-ring"></div>
+            <div class="ring inner-glow-ring"></div>
+            
+            <button class="core-button" id="micBtn" title="Click to Speak">
+              <div class="core-center">
+                <span class="core-icon" id="coreIcon">🎙️</span>
+                <span class="core-status" id="coreStatusText">IDLE</span>
+              </div>
+            </button>
+
+            <!-- Visualizer wave bars -->
+            <div class="waveform-container" id="waveform">
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+            </div>
+          </div>
+
+          <div class="status-feed">
+            <div class="status-indicator">
+              <span class="status-tag" id="statusStateTag">AWAITING INPUT</span>
+              <span class="status-desc" id="statusDesc">Click the Arc Reactor or type below to command JARVIS.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Command Input Console -->
+        <div class="input-console-card">
+          <form class="command-form" id="commandForm">
+            <div class="input-wrapper">
+              <span class="prompt-symbol">&gt;</span>
+              <input 
+                type="text" 
+                id="commandInput" 
+                class="command-input" 
+                placeholder="Ask JARVIS, open apps, search web, send messages... (e.g. 'open chrome', 'search AI news')" 
+                autocomplete="off"
+              >
+              <button type="button" class="action-btn mic-input-btn" id="subMicBtn" title="Speak command">
+                🎤
+              </button>
+              <button type="submit" class="action-btn send-btn" id="sendBtn" title="Transmit command">
+                <span>TRANSMIT</span>
+                <span class="send-arrow">➔</span>
+              </button>
+            </div>
+          </form>
+
+          <!-- Quick Suggestion Chips -->
+          <div class="suggestion-chips" id="suggestionChips">
+            <span class="chip-label">HOT-COMMANDS:</span>
+            <button class="chip" data-cmd="open chrome">Open Chrome</button>
+            <button class="chip" data-cmd="open youtube and play lo-fi">Play Lo-Fi Music</button>
+            <button class="chip" data-cmd="search for latest technology news">Tech News</button>
+            <button class="chip" data-cmd="kholo calculator">Kholo Calculator</button>
+            <button class="chip" data-cmd="send whatsapp to mom saying I will be home soon">WhatsApp Mom</button>
+            <button class="chip" data-cmd="who are you and what can you do?">Jarvis Abilities</button>
+          </div>
+        </div>
+
+        <!-- Skills Operation Deck with Tabs -->
+        <div class="skills-deck-card">
+          <div class="skills-header">
+            <div class="tabs-nav">
+              <button class="tab-btn active" data-tab="tab-apps" id="tabBtnApps">
+                <span class="tab-icon">⚡</span> App Launchpad
+              </button>
+              <button class="tab-btn" data-tab="tab-whatsapp" id="tabBtnWhatsApp">
+                <span class="tab-icon">💬</span> WhatsApp Web
+              </button>
+              <button class="tab-btn" data-tab="tab-email" id="tabBtnEmail">
+                <span class="tab-icon">✉️</span> Gmail Dispatch
+              </button>
+              <button class="tab-btn" data-tab="tab-search" id="tabBtnSearch">
+                <span class="tab-icon">🔍</span> DuckDuckGo
+              </button>
+              <button class="tab-btn" data-tab="tab-contacts" id="tabBtnContacts">
+                <span class="tab-icon">👥</span> Contacts
+              </button>
+            </div>
+          </div>
+
+          <!-- Tab 1: App Launchpad -->
+          <div class="tab-pane active" id="tab-apps">
+            <div class="apps-grid">
+              <button class="app-tile" data-app="chrome">
+                <span class="app-icon">🌐</span>
+                <span class="app-name">Google Chrome</span>
+                <span class="app-desc">Web Browser</span>
+              </button>
+              <button class="app-tile" data-app="notepad">
+                <span class="app-icon">📝</span>
+                <span class="app-name">Notepad</span>
+                <span class="app-desc">Text Editor</span>
+              </button>
+              <button class="app-tile" data-app="calculator">
+                <span class="app-icon">🧮</span>
+                <span class="app-name">Calculator</span>
+                <span class="app-desc">Windows Calc</span>
+              </button>
+              <button class="app-tile" data-app="spotify">
+                <span class="app-icon">🎵</span>
+                <span class="app-name">Spotify</span>
+                <span class="app-desc">Music & Audio</span>
+              </button>
+              <button class="app-tile" data-app="code">
+                <span class="app-icon">💻</span>
+                <span class="app-name">VS Code</span>
+                <span class="app-desc">Code Editor</span>
+              </button>
+              <button class="app-tile" data-app="explorer">
+                <span class="app-icon">📁</span>
+                <span class="app-name">File Explorer</span>
+                <span class="app-desc">Local Drives</span>
+              </button>
+              <button class="app-tile" data-app="terminal">
+                <span class="app-icon">⌨️</span>
+                <span class="app-name">Terminal</span>
+                <span class="app-desc">Windows Terminal</span>
+              </button>
+              <button class="app-tile" data-app="settings">
+                <span class="app-icon">⚙️</span>
+                <span class="app-name">Settings</span>
+                <span class="app-desc">System Settings</span>
+              </button>
+            </div>
+
+            <!-- Custom App or Search Launcher -->
+            <div class="custom-launcher-bar">
+              <input type="text" id="customAppInput" class="compact-input" placeholder="Launch any app name or URL (e.g. 'paint', 'github.com')...">
+              <button type="button" class="btn-primary" id="customAppLaunchBtn">Launch Now</button>
+            </div>
+          </div>
+
+          <!-- Tab 2: WhatsApp Deck -->
+          <div class="tab-pane" id="tab-whatsapp">
+            <div class="deck-form">
+              <div class="form-row">
+                <label for="waRecipient">Recipient:</label>
+                <div class="input-with-select">
+                  <input type="text" id="waRecipient" class="compact-input" placeholder="Name or number (e.g. Mom)">
+                  <select id="waQuickContact" class="select-picker">
+                    <option value="">-- Choose Contact --</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label for="waMessage">Message Body:</label>
+                <textarea id="waMessage" class="compact-textarea" rows="3" placeholder="Enter message to prefill in WhatsApp Web..."></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="btn-secondary" id="waAiDraftBtn">✨ Suggest with AI</button>
+                <button type="button" class="btn-primary" id="waSendBtn">🚀 Open in WhatsApp Web</button>
+              </div>
+              <p class="form-hint">Note: WhatsApp Web opens in your default browser with message pre-filled. You review and hit Send.</p>
+            </div>
+          </div>
+
+          <!-- Tab 3: Email Dispatch Deck -->
+          <div class="tab-pane" id="tab-email">
+            <div class="deck-form">
+              <div class="form-row">
+                <label for="emailTo">Recipient (To):</label>
+                <div class="input-with-select">
+                  <input type="text" id="emailTo" class="compact-input" placeholder="Recipient email or contact name">
+                  <select id="emailQuickContact" class="select-picker">
+                    <option value="">-- Choose Contact --</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label for="emailSubject">Subject:</label>
+                <input type="text" id="emailSubject" class="compact-input" placeholder="Subject line (or leave blank to auto-generate)">
+              </div>
+              <div class="form-row">
+                <label for="emailTopic">Topic / Instructions:</label>
+                <textarea id="emailTopic" class="compact-textarea" rows="3" placeholder="Tell JARVIS what this email is about (e.g. project submission update)..."></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="btn-secondary" id="emailAiDraftBtn">✨ Draft Content with AI</button>
+                <button type="button" class="btn-primary" id="emailSendBtn">📤 Dispatch Email</button>
+              </div>
+              <p class="form-hint" id="emailStatusHint">Requires EMAIL_USER and EMAIL_APP_PASSWORD in .env for SMTP delivery.</p>
+            </div>
+          </div>
+
+          <!-- Tab 4: Web Search Terminal -->
+          <div class="tab-pane" id="tab-search">
+            <div class="deck-form">
+              <div class="search-bar-row">
+                <input type="text" id="searchInput" class="compact-input" placeholder="Search the web with DuckDuckGo (no tracking)...">
+                <button type="button" class="btn-primary" id="searchExecBtn">Search</button>
+              </div>
+              <div class="search-results-box" id="searchResultsBox">
+                <div class="empty-state">Enter a query above to fetch instant search results.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 5: Contacts Book -->
+          <div class="tab-pane" id="tab-contacts">
+            <div class="contacts-deck">
+              <div class="contacts-table-wrapper">
+                <table class="contacts-table" id="contactsTable">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>WhatsApp ID</th>
+                      <th>Email</th>
+                      <th>Relation</th>
+                    </tr>
+                  </thead>
+                  <tbody id="contactsTableBody">
+                    <tr><td colspan="4">Loading contacts...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="new-contact-form">
+                <h4>Add New Contact</h4>
+                <div class="contact-inputs-grid">
+                  <input type="text" id="newContactName" placeholder="Full Name" class="compact-input">
+                  <input type="text" id="newContactWA" placeholder="WhatsApp Name/Phone" class="compact-input">
+                  <input type="email" id="newContactEmail" placeholder="Email Address" class="compact-input">
+                  <input type="text" id="newContactRelation" placeholder="Relation / Notes" class="compact-input">
+                  <button type="button" class="btn-primary" id="saveContactBtn">Save Contact</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: Live Conversation HUD Stream -->
+      <aside class="conversation-feed-card">
+        <div class="feed-header">
+          <div class="feed-title-box">
+            <span class="feed-icon">📡</span>
+            <span class="feed-title">NEURAL LOG STREAM</span>
+          </div>
+          <button class="clear-feed-btn" id="clearFeedBtn" title="Clear chat feed">CLEAR</button>
+        </div>
+
+        <div class="feed-stream" id="feedStream">
+          <div class="feed-message assistant">
+            <div class="msg-meta">
+              <span class="msg-author">J.A.R.V.I.S.</span>
+              <span class="msg-time">System Init</span>
+            </div>
+            <div class="msg-content">
+              Greetings! All neural subroutines are online. You can speak by tapping the Arc Reactor, or use the Command Console and Launchpad below.
+            </div>
+          </div>
+        </div>
+
+        <div class="feed-audio-controls">
+          <audio id="ttsAudioPlayer" style="display: none;"></audio>
+          <div class="audio-status" id="audioStatusText">Voice Ready (Piper TTS)</div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

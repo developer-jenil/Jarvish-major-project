@@ -2,16 +2,16 @@
 jarvis/tray.py — System tray icon for JARVIS.
 
 When the user runs JARVIS with the tray enabled (JARVIS_TRAY=1 env var,
-or later a command-line flag), the assistant runs in the background with
-a tray icon instead of a visible console window. The tray menu lets the
-user:
+or the --tray flag), the assistant runs in the background with a tray icon
+instead of a visible console window. The tray menu lets the user:
 
-    - View the current status (listening / idle / error)
+    - See the CURRENT engine status (listening / processing / idle)
     - Stop the assistant (graceful exit)
     - Quit (same as stop)
 
-The tray icon persists while the main loop runs. Pressing Ctrl+C in the
-console (if one is visible) also stops it cleanly.
+The status is LIVE: `report_status()` may be called from any thread and the
+tray menu text updates to match. main.py / cli.py call it at the start of
+each loop phase.
 
 Design decisions
 ----------------
@@ -31,6 +31,32 @@ import threading
 
 import pystray
 from PIL import Image, ImageDraw
+
+# --- Live status ----------------------------------------------------------
+# A thread-safe holder for the current assistant phase, so the tray menu can
+# show what JARVIS is doing RIGHT NOW (e.g. "Listening for 'Hey Jarvis'",
+# "Processing: open chrome", "Speaking"). main.py / cli.py call
+# report_status() at the start of each phase; the tray menu updates to match.
+
+# module-level shared state, guarded by a lock (status is small, lock is cheap)
+_status = "Idle"
+_status_lock = threading.Lock()
+
+
+def report_status(phase: str) -> None:
+    """Record the current assistant phase for the tray to display.
+
+    Safe to call from any thread. This only affects the tray menu text; it
+    never changes program behaviour.
+    """
+    global _status
+    with _status_lock:
+        _status = phase
+
+
+def _get_status() -> str:
+    with _status_lock:
+        return _status
 
 
 # --- Icon generation -----------------------------------------------------
@@ -84,13 +110,20 @@ def run_tray(main_fn, title: str = "JARVIS"):
                   block until the assistant is stopped (e.g. via Ctrl+C).
                   We run it in a background thread.
         title:    Shown in the tray tooltip.
+
+    The status menu item reflects the assistant's current phase (set via
+    report_status() from the running loop).
     """
+    def _status_item():
+        # pystray renders the menu on demand; return the current status text.
+        return f"Status: {_get_status()}"
+
     icon = pystray.Icon(
         "jarvis",
         title,
         _make_icon(),
         menu=pystray.Menu(
-            pystray.MenuItem("Status", lambda i: None, enabled=False),
+            pystray.MenuItem(_status_item, lambda i: None, enabled=False),
             pystray.MenuItem("Stop", _on_stop),
             pystray.MenuItem("Quit", _on_quit),
         ),

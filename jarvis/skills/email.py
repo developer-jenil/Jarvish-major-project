@@ -62,10 +62,6 @@ _RECIPIENT_MARKERS = re.compile(
     r"\b(to|for|ko|se)\b", re.IGNORECASE
 )
 
-# How the user indicates CC / BCC.
-_CC_RE = re.compile(r"\bcc\s+(\w[\w\s]*?)\b", re.IGNORECASE)
-_BCC_RE = re.compile(r"\bbcc\s+(\w[\w\s]*?)\b", re.IGNORECASE)
-
 # Extract the topic / body hint after "about", "re", "ki", etc.
 _TOPIC_MARKERS = re.compile(
     r"\b(?:about|re:?\s*|regarding|concerning|ka|ki|ke baare\s mein)\s+(.+)$",
@@ -97,55 +93,106 @@ def find_emails(contact_name: str) -> list[str]:
 def _extract_recipients(text: str) -> tuple[list[str], list[str], list[str]]:
     """Parse the command text and return (to_list, cc_list, bcc_list).
 
-    Each list contains resolved email addresses (strings with @). Fallback
-    to the raw name if no CSV match is found.
+    Each list contains resolved email addresses (strings with @). Names that
+    do not resolve to a contact are kept UNRESOLVED so the caller can tell
+    the user clearly, instead of sending an unqualified (SMTP-invalid) name
+    as the To address.
+
+    Strategy: scan for recipient markers ("to", "ko", "for", "cc", "bcc",
+    "se") anywhere in the sentence, and take the rest of the phrase up to
+    the next marker or a boundary word. This handles:
+      - English order:      "send an email to prof sharma and mom about X"
+      - Hinglish verb-last: "bhejo mom ko email ki meeting cancel"
+      - CC/BCC with names:  "mail john cc dad bcc mom that ..."
     """
     to_names: list[str] = []
     cc_names: list[str] = []
     bcc_names: list[str] = []
+    resolved_to, resolved_cc, resolved_bcc = [], [], []
 
-    # Extract CC / BCC names first (they appear before the main recipient).
-    cc_m = _CC_RE.search(text)
-    bcc_m = _BCC_RE.search(text)
-    if cc_m:
-        cc_names.append(cc_m.group(1).strip())
-    if bcc_m:
-        bcc_names.append(bcc_m.group(1).strip())
+    # Boundary words that end a recipient slot.
+    stop = {
+        "saying", "telling", "that", "about", "re", "regarding",
+        "concerning", "and", "the", "my", "please", "pls", "jarvis",
+        "ki", "ka", "ke", "karke", "mein", "main", "at",
+    }
 
-    # Extract the primary "to" recipient: the word after "to" / "ko" / "for".
-    # Simple heuristic: split on known markers and take the next word(s).
-    parts = text.lower().split()
-    marker_set = {"to", "ko", "for", "se", "bhejo", "mail", "email"}
-    collecting = False
-    current: list[str] = []
-    for part in parts:
-        clean = part.rstrip(".,!?;:")
-        if clean in marker_set:
-            collecting = True
-            current = []
-            continue
-        if collecting:
-            if clean in {"saying", "that", "about", "re", "and", "the", "my",
-                         "please", "pls", "jarvis", "ki", "ka", "ke"}:
-                break
-            current.append(clean)
-            collecting = False
-    if current:
-        to_names.append(" ".join(current))
+    def slot_kind(word: str) -> str | None:
+        w = word.rstrip(".,!?;:")
+        if w == "cc":
+            return "cc"
+        if w == "bcc":
+            return "bcc"
+        if w in ("to", "ko", "for", "se", "bhejo", "mail", "email"):
+            return "to"
+        return None
 
-    # Resolve names to email addresses.
-    def resolve(names: list[str]) -> list[str]:
-        addrs: list[str] = []
+    # Tokenise, tracking which slot we are collecting into.
+    parts = text.split()
+    i = 0
+    tokens: list[tuple[str, str]] = []  # (name_token, slot)
+    while i < len(parts):
+        raw = parts[i]
+        kind = slot_kind(raw)
+        if kind:
+            i += 1
+            name_tokens = []
+            while i < len(parts):
+                w = parts[i]
+                wc = w.rstrip(".,!?;:")
+                if slot_kind(w):
+                    break
+                if wc.lstrip(".-") and wc.lower() in stop:
+                    break
+                name_tokens.append(w)
+                i += 1
+            if name_tokens:
+                tokens.append((" ".join(name_tokens), kind))
+        else:
+            i += 1
+
+    # Resolve names to emails; names that don't resolve are left unresolved.
+    def resolve(names: list[str]) -> tuple[list[str], list[str]]:
+        ok_addrs, unresolved = [], []
         for name in names:
             hits = find_emails(name)
             if hits:
-                addrs.extend(hits)
+                ok_addrs.extend(hits)
             else:
-                # Keep the raw name; user can confirm/correct.
-                addrs.append(name.strip())
-        return addrs
+                unresolved.append(name)
+        return ok_addrs, unresolved
 
-    return resolve(to_names), resolve(cc_names), resolve(bcc_names)
+    for name, kind in tokens:
+        addr, unr = resolve([name])
+        if kind == "cc":
+            cc_names.append(name)
+            resolved_cc.extend(addr)
+        elif kind == "bcc":
+            bcc_names.append(name)
+            resolved_bcc.extend(addr)
+        else:
+            to_names.append(name)
+            resolved_to.extend(addr)
+
+    # Deduplicate within each list while preserving order.
+    def dedupe(items: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out = []
+        for it in items:
+            key = it.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(it)
+        return out
+
+    # An email that is already To should not also be CC'd (SMTP would
+    # reject it or send a duplicate copy).
+    cc_addrs = [a for a in dedupe(resolved_cc) if a.lower() not in {x.lower() for x in resolved_to}]
+    bcc_addrs = dedupe(resolved_bcc)
+    to_addrs = dedupe(resolved_to)
+
+    return to_addrs, cc_addrs, bcc_addrs
 
 
 def _extract_topic(text: str) -> str:
@@ -182,7 +229,11 @@ def try_send_email(text: str, dry_run: bool = False) -> tuple[bool, str]:
             "Could you tell me what it's about?"
         )
 
-    # Ask the LLM brain to draft subject + body.
+    # Ask the LLM brain to draft subject + body. `body` is given a default
+    # FIRST so a reply that lacks a literal "BODY:" line never leaves the
+    # variable unbound (a real bug class this module used to have).
+    body = topic
+    subject = topic
     from jarvis.brain import ask
     draft_prompt = (
         f"Draft a professional email. Topic: \"{topic}\". "
@@ -196,7 +247,6 @@ def try_send_email(text: str, dry_run: bool = False) -> tuple[bool, str]:
         subject = f"Regarding: {topic}"
         body = topic
     else:
-        subject = topic
         body_lines = reply.split("\n")
         for line in body_lines:
             low = line.lower()
