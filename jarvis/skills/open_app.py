@@ -154,59 +154,59 @@ BROWSERS: set[str] = {
     "google chrome", "microsoft edge", "mozilla",
 }
 
-# Verbs that signal an "open/launch" command. Includes Hinglish verbs so the
-# assistant behaves in mixed Hindi+English the same way the LLM brain does.
-_OPEN_VERBS = (
-    r"(?:open|launch|start|run|chalao|chalaao|kholo|khol|shuru|"
-    r"shuru\s+karo|khologe|khulo)"
+# Verbs that signal an "open/launch" command. Includes English and Hinglish verbs
+# at the beginning (prefix) or end (suffix) of a sentence.
+_PREFIX_VERBS = (
+    r"(?:open|launch|start|run|chalao|chalaao|chala\s+do|kholo|khol|khol\s+do|"
+    r"khol\s+de|khol\s+dijiye|kholna|shuru\s+karo|shuru|khologe|khulo)"
+)
+_SUFFIX_VERBS = (
+    r"(?:kholo|khol\s+do|khol\s+de|khol\s+dijiye|kholna|chalao|chalaao|chala\s+do|"
+    r"open\s+karo|open\s+kar\s+do|open\s+kijiye|open\s+karna|open|"
+    r"start\s+karo|start\s+kar\s+do|shuru\s+karo|launch\s+karo)"
 )
 
-# Matches the command verb at the start of what the user said and captures the
-# rest (the target app, possibly with a trailing query). We keep it simple and
-# let later code split the query off.
-_INTENT_RE = re.compile(rf"\b{_OPEN_VERBS}\b\s+(.+?)\s*$", re.IGNORECASE)
-
-# Splits a target string into "app name" + optional "search/play query".
-# e.g. "youtube and play despacito" -> ("youtube", "despacito")
-_QUERY_SPLIT_RE = re.compile(
-    r"\s+(?:and\s+)?(?:search\s+for|search|find|look\s+up|google|"
-    r"play|watch|listen\s+to|show\s+me|open)\s+(.+)$",
+# Matches prefix commands: e.g. "open notepad", "kholo calculator", "please open chrome"
+_PREFIX_INTENT_RE = re.compile(
+    rf"^(?:(?:hey\s+|ok\s+)?jarvis\s+|please\s+|pls\s+|can\s+you\s+|could\s+you\s+|kripya\s+|zara\s+)?\b{_PREFIX_VERBS}\b\s+(.+?)\s*$",
     re.IGNORECASE,
 )
 
-# Polite filler words we strip from the front of a target name so
-# "open my file explorer" -> "file explorer", "open the calculator" -> "calculator".
-_FILLER_RE = re.compile(r"^(?:the|my|please|pls|jarvis|a|an|up|me|bahut|ek)\s+",
-                        re.IGNORECASE)
+# Matches suffix commands: e.g. "notepad application kholo", "chrome chalao", "calculator open karo"
+_SUFFIX_INTENT_RE = re.compile(
+    rf"^(?:(?:hey\s+|ok\s+)?jarvis\s+|please\s+|pls\s+|kripya\s+|zara\s+|tum\s+|aap\s+)?(.+?)\s+(?:ko\s+|ka\s+|ki\s+)?\b{_SUFFIX_VERBS}\b\s*$",
+    re.IGNORECASE,
+)
+
+# Splits a target string into "app name" + optional "search/play query".
+# e.g. "youtube and play despacito" -> ("youtube", "despacito")
+# or "youtube par despacito" -> ("youtube", "despacito")
+_QUERY_SPLIT_RE = re.compile(
+    r"\s+(?:(?:and\s+|aur\s+|par\s+|pe\s+)?(?:search\s+for|search|find|look\s+up|google|"
+    r"play|watch|listen\s+to|show\s+me|open|chalao|dikhau)|par|pe)\s+(.+)$",
+    re.IGNORECASE,
+)
+
+# Filler words and descriptors to strip from target
+_FILLER_LEADING_RE = re.compile(
+    r"^(?:the|my|a|an|please|pls|jarvis|zara|kripya|meri|apna|apni|ek|tum|aap)\s+",
+    re.IGNORECASE,
+)
+_FILLER_TRAILING_RE = re.compile(
+    r"\s+(?:application|app|apps|software|program|browser|window|ko|ka|ki|wali|wale|wala|please|pls)$",
+    re.IGNORECASE,
+)
 
 # Trailing punctuation Whisper sometimes leaves on the end of a command.
 _TRAIL_PUNCT_RE = re.compile(r"[.,!?;:]+$")
 
 # --- Security: input validation ------------------------------------------
-#
-# Voice input is attacker-controlled (anyone can speak to the mic, or a
-# recording can be played). We MUST treat every target string as untrusted
-# and refuse anything that could break out of an os.startfile / subprocess
-# call. Two layers of defence:
-#
-#   1. SHELL_METACHARS  — any target containing these is REJECTED outright.
-#                         This blocks "open foo & calc", "open foo; rm -rf",
-#                         "open foo && del /q", "open $(...)", etc.
-#   2. SAFE_URL_SCHEMES — the auto-URL branch only accepts http(s). It
-#                         explicitly REJECTS javascript:, file:, data:,
-#                         vbscript:, about:, etc., so a spoken "open
-#                         javascript:alert(1)" cannot trigger a URI handler.
 SHELL_METACHARS = set('"&|<>^`(){};\\\'`\n\r\t$*?[]')
 SAFE_URL_SCHEMES = ("http://", "https://")
 
 
 def _is_safe_app_target(name: str) -> bool:
-    """True iff `name` is a bare exe/URI name we are willing to launch.
-
-    Blocks anything with shell metacharacters, anything that contains a
-    space (multi-word args are NOT allowed through os.startfile), and
-    anything that does not match a known safe pattern.
-    """
+    """True iff `name` is a bare exe/URI name we are willing to launch."""
     if not name:
         return False
     if any(c in SHELL_METACHARS for c in name):
@@ -217,38 +217,22 @@ def _is_safe_app_target(name: str) -> bool:
 
 
 def _is_safe_url(url: str) -> bool:
-    """True iff `url` is an http(s) URL we are willing to open.
-
-    The check is "starts with http:// or https://" AND does not then contain
-    another scheme prefix. This blocks the prefix-injection case where a
-    user says "open file:///..." and resolve_target would otherwise produce
-    "https://file:///..." which is technically a https:// URL but is junk.
-    """
+    """True iff `url` is an http(s) URL we are willing to open."""
     if not url:
         return False
     lowered = url.lower().strip()
     if not any(lowered.startswith(scheme) for scheme in SAFE_URL_SCHEMES):
         return False
-    # Strip the scheme prefix; what remains must be a normal host[/path],
-    # not another scheme (which would mean someone put a "https://" in front
-    # of e.g. "file:///..." or "javascript:...").
     remainder = lowered
     for scheme in SAFE_URL_SCHEMES:
         if remainder.startswith(scheme):
             remainder = remainder[len(scheme):]
             break
-    # remainder must start with a hostname character (letter/digit) or
-    # contain a dot before any colon that could be another scheme.
     if not remainder or remainder[0] in ":/?#":
         return False
-    # Anything with a colon before the first slash is suspicious (could be
-    # `host:port`, which is OK, OR a nested scheme like `file:`).
-    # We allow a single colon only if followed by digits (port) and only
-    # before any "/".
     first_slash = remainder.find("/")
     head = remainder if first_slash == -1 else remainder[:first_slash]
     if ":" in head:
-        # exactly one colon, and the part after is digits (port) — OK.
         host, _, port = head.partition(":")
         if not port.isdigit():
             return False
@@ -263,13 +247,13 @@ def _normalize(name: str) -> str:
 
 
 def _strip_target(text: str) -> str:
-    """Remove filler words and trailing punctuation from a target name."""
+    """Remove filler words, descriptors, and trailing punctuation from a target name."""
     text = _TRAIL_PUNCT_RE.sub("", text.strip())
-    # Strip filler repeatedly (e.g. "my the calculator").
     prev = None
     while prev != text:
         prev = text
-        text = _FILLER_RE.sub("", text).strip()
+        text = _FILLER_LEADING_RE.sub("", text).strip()
+        text = _FILLER_TRAILING_RE.sub("", text).strip()
     return text
 
 
@@ -284,6 +268,12 @@ def resolve_target(name: str) -> tuple[str, str, str | None]:
     """
     key = _normalize(name)
 
+    # Security check: if key contains shell metacharacters, do NOT match against
+    # known apps/websites (which would strip the malicious payload). Return key directly
+    # so downstream _is_safe_app_target() or _is_safe_url() will reject it.
+    if any(c in SHELL_METACHARS for c in key):
+        return "app", key, None
+
     # 1. Exact known app.
     if key in APPS:
         return "app", APPS[key], None
@@ -293,42 +283,29 @@ def resolve_target(name: str) -> tuple[str, str, str | None]:
         base, tmpl = WEBSITES[key]
         return "site", base, tmpl
 
-    # 3. Something that already looks like a web address (e.g. "github.com",
-    #    "openai.com/blog"). Open it as a URL — but ONLY if it is a safe
-    #    http(s) target. javascript:, file:, data:, vbscript:, etc. are
-    #    explicitly rejected so a malicious voice command cannot trigger
-    #    a URI handler.
+    # 3. Substring word match in APPS (e.g. "notepad application" -> "notepad")
+    for app_name, app_cmd in sorted(APPS.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"\b{re.escape(app_name)}\b", key):
+            return "app", app_cmd, None
+
+    # 4. Substring word match in WEBSITES (e.g. "youtube video" -> "youtube")
+    for site_name, (base, tmpl) in sorted(WEBSITES.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"\b{re.escape(site_name)}\b", key):
+            return "site", base, tmpl
+
+    # 5. Something that already looks like a web address.
     if "." in key and " " not in key:
         url = key if key.startswith(("http://", "https://")) else "https://" + key
         if _is_safe_url(url):
             return "site", url, None
-        # Looks URL-shaped but starts with a dangerous scheme — refuse.
-        return "app", "", None  # empty target will fail downstream safely
+        return "app", "", None
 
-    # 4. Unknown name: best-effort. We still return ("app", key, None) so
-    #    that the caller's _shell_open will validate; if `key` has any
-    #    shell metacharacters, _is_safe_app_target will reject it there.
+    # 6. Unknown name: best-effort.
     return "app", key, None
 
 
 def _shell_open(target: str, arg: str | None = None) -> bool:
-    """Open `target` on Windows, after validating it against an allowlist.
-
-    `target` may be an app/executable name (from our APPS map) or an http(s)
-    URL (from our WEBSITES map or a user-typed domain). It is NEVER raw user
-    input that has not been through `_is_safe_app_target` / `_is_safe_url`.
-
-    `arg` (optional) is a URL to open in `target` (browser-with-search case).
-    It is also validated.
-
-    Returns True on success. Both code paths (os.startfile for a single
-    target, subprocess.Popen with a list for target+arg) use shell=False so
-    the cmd.exe metacharacter injection vector is closed.
-
-    Note: this intentionally does NOT fall back to a free-form `start "" "X"`
-    shell call. If validation fails, we refuse; that is the whole point.
-    """
-    # Validate before doing anything.
+    """Open `target` on Windows, after validating it against an allowlist."""
     if arg is not None:
         if not _is_safe_app_target(target):
             print(f"[open_app] refused: target {target!r} failed safety check")
@@ -336,8 +313,6 @@ def _shell_open(target: str, arg: str | None = None) -> bool:
         if not _is_safe_url(arg):
             print(f"[open_app] refused: arg {arg!r} is not an http(s) URL")
             return False
-        # List-form subprocess: no shell, so metacharacters in either string
-        # would have to bypass Windows' own CreateProcess parsing.
         try:
             subprocess.Popen([target, arg], shell=False)
             return True
@@ -348,16 +323,34 @@ def _shell_open(target: str, arg: str | None = None) -> bool:
         # Single target: either a known app name or a known URL.
         if _is_safe_url(target):
             try:
-                os.startfile(target)  # ShellExecuteW with an http(s) URL is safe.
+                os.startfile(target)
                 return True
             except OSError as e:
                 print(f"[open_app] could not open URL {target!r}: {e}")
                 return False
         if _is_safe_app_target(target):
             try:
-                os.startfile(target)  # ShellExecuteW with a bare exe name is safe.
+                os.startfile(target)
                 return True
-            except OSError as e:
+            except OSError:
+                pass
+            # Fallback 1: try with .exe
+            try:
+                os.startfile(target + ".exe")
+                return True
+            except OSError:
+                pass
+            # Fallback 2: try URI scheme protocol (e.g. "calc:" or "whatsapp:")
+            try:
+                os.startfile(target + ":")
+                return True
+            except OSError:
+                pass
+            # Fallback 3: try subprocess list launch
+            try:
+                subprocess.Popen([target], shell=False)
+                return True
+            except (FileNotFoundError, OSError) as e:
                 print(f"[open_app] could not open {target!r}: {e}")
                 return False
         print(f"[open_app] refused: target {target!r} failed safety check")
@@ -372,10 +365,10 @@ def _build_search(template: str, query: str) -> str:
 # --- Public API ----------------------------------------------------------
 
 def match_intent(text: str) -> tuple[str, str | None] | None:
-    """Parse an "open X" command.
+    """Parse an "open X" command. Supports English and Hinglish (prefix and suffix verbs).
 
     Args:
-        text: the transcribed command (any case; STT already lowercases).
+        text: the transcribed command (any case).
 
     Returns:
         (target, query) where `query` may be None, OR None if this is not an
@@ -384,18 +377,24 @@ def match_intent(text: str) -> tuple[str, str | None] | None:
     if not text:
         return None
 
-    m = _INTENT_RE.search(text)
-    if not m:
-        return None
+    remainder = None
+    m = _PREFIX_INTENT_RE.match(text)
+    if m:
+        remainder = m.group(1).strip()
+    else:
+        m2 = _SUFFIX_INTENT_RE.match(text)
+        if m2:
+            remainder = m2.group(1).strip()
 
-    remainder = m.group(1).strip()
+    if not remainder:
+        return None
 
     # Split off an optional "search for / play ..." query.
     query: str | None = None
     qm = _QUERY_SPLIT_RE.search(remainder)
     if qm:
-        remainder = remainder[: qm.start()].strip()
         query = qm.group(1).strip()
+        remainder = remainder[: qm.start()].strip()
 
     target = _strip_target(remainder)
     if not target:

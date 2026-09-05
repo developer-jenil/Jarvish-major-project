@@ -20,6 +20,12 @@ class TestSkills(unittest.TestCase):
             ("start spotify", "spotify", None),
             ("open youtube and play despacito", "youtube", "despacito"),
             ("open google and search for weather in mumbai", "google", "weather in mumbai"),
+            ("Notepad application kholo", "Notepad", None),
+            ("notepad kholo", "notepad", None),
+            ("calculator app open karo", "calculator", None),
+            ("chrome chalao", "chrome", None),
+            ("whatsapp application ko open karo", "whatsapp", None),
+            ("youtube par despacito chalao", "youtube", "despacito"),
         ]
         for text, expected_app, expected_q in samples:
             parsed = open_app_match(text)
