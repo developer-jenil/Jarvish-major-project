@@ -21,6 +21,7 @@ class TestServer(unittest.TestCase):
         self.assertIn(b"NEURAL OPERATING INTERFACE", response.data)
         self.assertIn(b"voiceEngineSelect", response.data)
         self.assertIn(b"silenceCountdownBadge", response.data)
+        self.assertIn(b"handsFreeToggleBtn", response.data)
 
     def test_status_endpoint(self):
         """GET /api/status should return system telemetry JSON."""

@@ -42,6 +42,11 @@
           <span class="badge-label">STT</span>
           <span class="badge-val">WHISPER</span>
         </div>
+        <div class="badge" id="badgeAutoMic">
+          <span class="badge-icon">🎙️</span>
+          <span class="badge-label">MIC</span>
+          <span class="badge-val" id="autoMicBadgeVal">AUTO-LISTEN</span>
+        </div>
         <div class="badge" id="badgeTTS">
           <span class="badge-icon">🔊</span>
           <span class="badge-label">TTS</span>
@@ -64,6 +69,10 @@
             <option value="piper:default">Piper (Offline Neural 🤖)</option>
           </select>
         </div>
+        <button class="toggle-btn active" id="handsFreeToggleBtn" title="Toggle Hands-Free Auto-Listening (automatically detects voice, 3s pause submits command, loops continuously)">
+          <span class="toggle-icon">🎙️</span>
+          <span class="toggle-label">AUTO-MIC: <b id="handsFreeStatusText">ON</b></span>
+        </button>
         <button class="toggle-btn" id="wakewordToggleBtn" title="Toggle 'Hey Jarvis' hotword background listener">
           <span class="toggle-icon">⚡</span>
           <span class="toggle-label">HOTWORD: <b id="wakewordStatusText">OFF</b></span>
@@ -118,10 +127,15 @@
             <span class="countdown-text" id="silenceCountdownText">Silence detected: transmitting in 3s...</span>
           </div>
 
+          <!-- Browser Permission Prompt (shown if initial autostart is blocked) -->
+          <div class="mic-permission-banner" id="micPermissionBanner" style="display: none;">
+            <span>👆 Click anywhere to activate Hands-Free Microphone</span>
+          </div>
+
           <div class="status-feed">
             <div class="status-indicator">
-              <span class="status-tag" id="statusStateTag">AWAITING INPUT</span>
-              <span class="status-desc" id="statusDesc">Click the Arc Reactor or type below to command JARVIS.</span>
+              <span class="status-tag" id="statusStateTag">HANDS-FREE ACTIVE</span>
+              <span class="status-desc" id="statusDesc">Listening automatically. Speak anytime; commands submit after 3s pause.</span>
             </div>
           </div>
         </div>

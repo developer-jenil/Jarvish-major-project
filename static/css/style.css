@@ -374,6 +374,30 @@ body {
   50% { opacity: 0.3; transform: scale(0.7); }
 }
 
+.mic-permission-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px auto 0;
+  padding: 8px 18px;
+  background: rgba(0, 242, 254, 0.12);
+  border: 1px dashed var(--cyan-bright);
+  border-radius: 20px;
+  color: var(--cyan-bright);
+  font-family: var(--font-tech);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  animation: pulseGlow 1.8s infinite alternate;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.mic-permission-banner:hover {
+  background: rgba(0, 242, 254, 0.25);
+  border-color: #fff;
+}
+
 /* Main Workspace Grid */
 .hud-main {
   display: grid;

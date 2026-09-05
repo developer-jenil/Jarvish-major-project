@@ -29,6 +29,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const ttsBadgeVal = document.getElementById("ttsBadgeVal");
   const silenceCountdownBadge = document.getElementById("silenceCountdownBadge");
   const silenceCountdownText = document.getElementById("silenceCountdownText");
+  const micPermissionBanner = document.getElementById("micPermissionBanner");
+
+  const handsFreeToggleBtn = document.getElementById("handsFreeToggleBtn");
+  const handsFreeStatusText = document.getElementById("handsFreeStatusText");
+  const autoMicBadgeVal = document.getElementById("autoMicBadgeVal");
 
   const wakewordToggleBtn = document.getElementById("wakewordToggleBtn");
   const wakewordStatusText = document.getElementById("wakewordStatusText");
@@ -75,6 +80,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- State Variables ---
   let isAudioMuted = false;
   let isListening = false;
+  let isSpeaking = false;
+  let isExecuting = false;
+  let handsFreeEnabled = localStorage.getItem("jarvis_hands_free") !== "false"; // default TRUE
   let recognition = null;
   let contactsCache = [];
 
@@ -133,6 +141,63 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(updateClock, 1000);
   updateClock();
 
+  // --- Hands-Free / Auto-Listen Mode Controller ---
+  function updateHandsFreeUI(enabled) {
+    if (handsFreeToggleBtn && handsFreeStatusText) {
+      if (enabled) {
+        handsFreeToggleBtn.classList.add("active");
+        handsFreeStatusText.textContent = "ON";
+      } else {
+        handsFreeToggleBtn.classList.remove("active");
+        handsFreeStatusText.textContent = "OFF";
+      }
+    }
+    if (autoMicBadgeVal) {
+      autoMicBadgeVal.textContent = enabled ? "AUTO-LISTEN" : "MANUAL";
+    }
+  }
+
+  function startListening() {
+    if (!recognition) return;
+    if (isSpeaking || isExecuting || isListening) return;
+
+    try {
+      accumulatedTranscript = "";
+      if (silenceCountdownBadge) silenceCountdownBadge.style.display = "none";
+      recognition.start();
+      isListening = true;
+      if (handsFreeEnabled) {
+        setReactorState("listening", "HANDS-FREE ACTIVE", "Listening automatically. Speak anytime; commands submit after 3s pause.");
+      } else {
+        setReactorState("listening", "LISTENING...", "JARVIS is listening. Speak clearly; pauses under 3s are kept.");
+      }
+    } catch (err) {
+      if (err.name !== "InvalidStateError") {
+        console.warn("Recognition start error:", err);
+      }
+    }
+  }
+
+  function stopListening() {
+    if (silenceTimer) {
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
+    }
+    if (countdownInterval) {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+    }
+    if (silenceCountdownBadge) {
+      silenceCountdownBadge.style.display = "none";
+    }
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch (_) {}
+    }
+    isListening = false;
+  }
+
   // --- 2. Web Speech API Setup with Continuous 3s Pause Detection ---
   function resetSilenceCountdown() {
     if (silenceTimer) {
@@ -188,18 +253,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const textToSend = (accumulatedTranscript || commandInput.value || "").trim();
-    if (recognition) {
-      try {
-        recognition.stop();
-      } catch (_) {}
-    }
-    isListening = false;
+    accumulatedTranscript = "";
+
+    // Stop recognition while executing so it doesn't pick up ambient background noise
+    stopListening();
 
     if (textToSend) {
       commandInput.value = textToSend;
       executeCommand(textToSend);
     } else {
-      setReactorState("idle", "SYSTEM READY", "Ready for voice or keyboard commands.");
+      if (handsFreeEnabled) {
+        setTimeout(startListening, 300);
+      } else {
+        setReactorState("idle", "SYSTEM READY", "Ready for voice or keyboard commands.");
+      }
     }
   }
 
@@ -214,10 +281,16 @@ document.addEventListener("DOMContentLoaded", () => {
       isListening = true;
       accumulatedTranscript = "";
       if (silenceCountdownBadge) silenceCountdownBadge.style.display = "none";
-      setReactorState("listening", "LISTENING...", "JARVIS is listening. Speak clearly; pauses under 3s are kept.");
+      if (handsFreeEnabled) {
+        setReactorState("listening", "HANDS-FREE ACTIVE", "Listening automatically. Speak anytime; commands submit after 3s pause.");
+      } else {
+        setReactorState("listening", "LISTENING...", "JARVIS is listening. Speak clearly; pauses under 3s are kept.");
+      }
     };
 
     recognition.onresult = (event) => {
+      if (isSpeaking || isExecuting) return; // Prevent echoing JARVIS's voice output
+
       let interim = "";
       let final = "";
 
@@ -231,6 +304,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const combined = (final + interim).trim();
       if (combined) {
+        if (micPermissionBanner) micPermissionBanner.style.display = "none";
         accumulatedTranscript = combined;
         commandInput.value = combined;
         setReactorState("listening", "HEARING SPEECH...", `"${combined}"`);
@@ -241,25 +315,43 @@ document.addEventListener("DOMContentLoaded", () => {
 
     recognition.onerror = (event) => {
       console.warn("Speech recognition error:", event.error);
-      if (event.error !== "no-speech") {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        if (micPermissionBanner) micPermissionBanner.style.display = "flex";
+        handsFreeEnabled = false;
+        updateHandsFreeUI(false);
+        setReactorState("idle", "MIC PERMISSION REQUIRED", "Click anywhere or allow mic access in your browser.");
+      } else if (event.error === "no-speech") {
+        // Normal pause; onend will automatically loop back
+      } else {
         if (silenceCountdownBadge) silenceCountdownBadge.style.display = "none";
-        setReactorState("idle", "SYSTEM READY", "Voice detection ended. Ready for commands.");
-        isListening = false;
+        if (handsFreeEnabled && !isSpeaking && !isExecuting) {
+          setTimeout(() => {
+            if (handsFreeEnabled && !isSpeaking && !isExecuting && !isListening) {
+              startListening();
+            }
+          }, 500);
+        }
       }
     };
 
     recognition.onend = () => {
-      if (isListening) {
-        const textToSend = (accumulatedTranscript || commandInput.value || "").trim();
-        if (textToSend && silenceTimer) {
-          stopListeningAndTransmit();
-        } else {
-          isListening = false;
-          if (silenceCountdownBadge) silenceCountdownBadge.style.display = "none";
-          if (!reactorContainer.classList.contains("processing") && !reactorContainer.classList.contains("speaking")) {
-            setReactorState("idle", "SYSTEM READY", "Ready for voice or keyboard commands.");
+      isListening = false;
+      if (silenceCountdownBadge) silenceCountdownBadge.style.display = "none";
+
+      const textToSend = (accumulatedTranscript || commandInput.value || "").trim();
+      if (textToSend && silenceTimer) {
+        stopListeningAndTransmit();
+        return;
+      }
+
+      if (handsFreeEnabled && !isSpeaking && !isExecuting) {
+        setTimeout(() => {
+          if (handsFreeEnabled && !isSpeaking && !isExecuting && !isListening) {
+            startListening();
           }
-        }
+        }, 250);
+      } else if (!isSpeaking && !isExecuting) {
+        setReactorState("idle", "SYSTEM READY", "Ready for voice or keyboard commands.");
       }
     };
   }
@@ -271,32 +363,41 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (isListening) {
-      // If user clicks mic while listening, transmit what was spoken immediately!
+      // If user clicks mic while listening, transmit what was spoken immediately without waiting 3s!
       const currentText = (accumulatedTranscript || commandInput.value || "").trim();
       if (currentText) {
         stopListeningAndTransmit();
-      } else {
-        if (silenceTimer) clearTimeout(silenceTimer);
-        if (countdownInterval) clearInterval(countdownInterval);
-        if (silenceCountdownBadge) silenceCountdownBadge.style.display = "none";
-        try { recognition.stop(); } catch (_) {}
-        isListening = false;
+      } else if (!handsFreeEnabled) {
+        stopListening();
         setReactorState("idle", "SYSTEM READY", "Ready for commands.");
       }
     } else {
-      try {
-        accumulatedTranscript = "";
-        commandInput.value = "";
-        if (silenceCountdownBadge) silenceCountdownBadge.style.display = "none";
-        recognition.start();
-      } catch (err) {
-        console.warn("Recognition start error:", err);
-      }
+      startListening();
     }
   }
 
   micBtn.addEventListener("click", toggleSpeechInput);
   subMicBtn.addEventListener("click", toggleSpeechInput);
+
+  // Hands-Free Toggle Button Listener
+  if (handsFreeToggleBtn) {
+    updateHandsFreeUI(handsFreeEnabled);
+
+    handsFreeToggleBtn.addEventListener("click", () => {
+      handsFreeEnabled = !handsFreeEnabled;
+      localStorage.setItem("jarvis_hands_free", handsFreeEnabled ? "true" : "false");
+      updateHandsFreeUI(handsFreeEnabled);
+
+      if (handsFreeEnabled) {
+        appendFeedMessage("assistant", "Hands-Free Auto-Listening activated. Speak anytime without clicking the mic!");
+        startListening();
+      } else {
+        appendFeedMessage("assistant", "Hands-Free Auto-Listening disabled. Click the mic button to speak manually.");
+        stopListening();
+        setReactorState("idle", "SYSTEM READY", "Manual mode active. Click mic or type to speak.");
+      }
+    });
+  }
 
   // --- 3. Reactor Visualizer State Transitions ---
   function setReactorState(state, statusTag, desc) {
@@ -305,8 +406,13 @@ document.addEventListener("DOMContentLoaded", () => {
     statusDesc.textContent = desc;
 
     if (state === "listening") {
-      coreIcon.textContent = "👂";
-      coreStatusText.textContent = "HEARING";
+      if (statusTag.includes("HEARING")) {
+        coreIcon.textContent = "👂";
+        coreStatusText.textContent = "HEARING";
+      } else {
+        coreIcon.textContent = "🎙️";
+        coreStatusText.textContent = handsFreeEnabled ? "AUTO-ON" : "LISTENING";
+      }
     } else if (state === "processing") {
       coreIcon.textContent = "⚡";
       coreStatusText.textContent = "THINKING";
@@ -315,7 +421,7 @@ document.addEventListener("DOMContentLoaded", () => {
       coreStatusText.textContent = "SPEAKING";
     } else {
       coreIcon.textContent = "🎙️";
-      coreStatusText.textContent = "IDLE";
+      coreStatusText.textContent = handsFreeEnabled ? "AUTO-ON" : "IDLE";
     }
   }
 
@@ -323,6 +429,9 @@ document.addEventListener("DOMContentLoaded", () => {
   async function executeCommand(cmdText) {
     const text = (cmdText || commandInput.value || "").trim();
     if (!text) return;
+
+    isExecuting = true;
+    stopListening(); // Make sure mic is stopped while waiting for backend
 
     const { engine, voice } = getActiveVoiceConfig();
 
@@ -343,17 +452,28 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       const data = await response.json();
+      isExecuting = false;
+
       if (data.success) {
         appendFeedMessage("assistant", data.reply, data.audio_url);
         playSpokenReply(data.audio_url);
       } else {
         appendFeedMessage("assistant", "An error occurred: " + (data.error || "Unknown error"));
-        setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+        if (handsFreeEnabled) {
+          setTimeout(startListening, 500);
+        } else {
+          setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+        }
       }
     } catch (err) {
       console.error("Execution error:", err);
+      isExecuting = false;
       appendFeedMessage("assistant", "Network failure connecting to JARVIS neural backend.");
-      setReactorState("idle", "SYSTEM READY", "Error encountered. Ready for commands.");
+      if (handsFreeEnabled) {
+        setTimeout(startListening, 1000);
+      } else {
+        setReactorState("idle", "SYSTEM READY", "Error encountered. Ready for commands.");
+      }
     }
   }
 
@@ -376,9 +496,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- 5. Spoken Audio Playback ---
   function playSpokenReply(audioUrl) {
     if (isAudioMuted || !audioUrl) {
-      setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      isSpeaking = false;
+      if (handsFreeEnabled) {
+        setTimeout(startListening, 400);
+      } else {
+        setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      }
       return;
     }
+
+    isSpeaking = true;
+    stopListening(); // Crucial: mic stays off while JARVIS is speaking out loud!
 
     const { engine, voice } = getActiveVoiceConfig();
     const voiceDisplayName = engine === "edge" ? "Neural AI Voice" : "Piper Offline Voice";
@@ -393,17 +521,32 @@ document.addEventListener("DOMContentLoaded", () => {
       if (audioStatusText) audioStatusText.textContent = `Speaking (${voiceDisplayName})...`;
     }).catch(err => {
       console.warn("Audio playback prevented or failed:", err);
-      setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      isSpeaking = false;
+      if (handsFreeEnabled) {
+        setTimeout(startListening, 400);
+      } else {
+        setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      }
     });
 
     ttsAudioPlayer.onended = () => {
+      isSpeaking = false;
       if (audioStatusText) audioStatusText.textContent = `Voice Ready (${voiceDisplayName})`;
-      setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      if (handsFreeEnabled) {
+        setTimeout(startListening, 300); // Hands-Free resumes automatically!
+      } else {
+        setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      }
     };
 
     ttsAudioPlayer.onerror = () => {
+      isSpeaking = false;
       if (audioStatusText) audioStatusText.textContent = "Audio playback error";
-      setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      if (handsFreeEnabled) {
+        setTimeout(startListening, 400);
+      } else {
+        setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+      }
     };
   }
 
@@ -418,8 +561,13 @@ document.addEventListener("DOMContentLoaded", () => {
       audioMuteBtn.style.color = "var(--text-dim)";
       if (audioStatusText) audioStatusText.textContent = "Audio Muted";
       ttsAudioPlayer.pause();
+      isSpeaking = false;
       if (reactorContainer.classList.contains("speaking")) {
-        setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+        if (handsFreeEnabled) {
+          setTimeout(startListening, 300);
+        } else {
+          setReactorState("idle", "SYSTEM READY", "Ready for commands.");
+        }
       }
     } else {
       audioMuteIcon.textContent = "🔊";
@@ -808,4 +956,23 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initial loads
   checkSystemStatus();
   loadContacts();
+
+  // Hands-Free Auto-Start on page launch
+  if (handsFreeEnabled) {
+    setTimeout(startListening, 500);
+  }
+
+  // Fallback: unlock on first gesture if browser security blocks cold-start speech recognition
+  const unlockHandsFreeOnGesture = () => {
+    if (micPermissionBanner) micPermissionBanner.style.display = "none";
+    if (handsFreeEnabled && !isListening && !isSpeaking && !isExecuting) {
+      startListening();
+    }
+  };
+  window.addEventListener("pointerdown", unlockHandsFreeOnGesture, { once: true });
+  window.addEventListener("keydown", unlockHandsFreeOnGesture, { once: true });
+
+  if (micPermissionBanner) {
+    micPermissionBanner.addEventListener("click", unlockHandsFreeOnGesture);
+  }
 });
