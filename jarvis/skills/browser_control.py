@@ -67,6 +67,24 @@ _ORDINALS_MAP: dict[str, int] = {
     "paanchva": 4,
 }
 
+KNOWN_SITES: dict[str, str] = {
+    "gmail": "https://mail.google.com",
+    "google": "https://www.google.com",
+    "youtube": "https://www.youtube.com",
+    "facebook": "https://www.facebook.com",
+    "fb": "https://www.facebook.com",
+    "instagram": "https://www.instagram.com",
+    "twitter": "https://twitter.com",
+    "x": "https://twitter.com",
+    "github": "https://github.com",
+    "whatsapp": "https://web.whatsapp.com",
+    "reddit": "https://www.reddit.com",
+    "netflix": "https://www.netflix.com",
+    "wikipedia": "https://www.wikipedia.org",
+    "wiki": "https://en.wikipedia.org",
+    "chatgpt": "https://chat.openai.com",
+}
+
 SAFE_URL_SCHEMES = ("http://", "https://")
 
 
@@ -119,8 +137,74 @@ def is_safe_url(url: str) -> bool:
     return low.startswith(SAFE_URL_SCHEMES)
 
 
-def open_url_in_chrome(url: str, dry_run: bool = False, new_window: bool = False) -> bool:
-    """Open a URL in Google Chrome on the desktop."""
+def get_desktop_startupinfo() -> subprocess.STARTUPINFO:
+    """Create a STARTUPINFO struct targeting the interactive user desktop."""
+    si = subprocess.STARTUPINFO()
+    try:
+        si.lpDesktop = r"WinSta0\Default"
+    except Exception:
+        pass
+    return si
+
+
+def launch_on_user_desktop(cmd_line: str) -> bool:
+    """Execute command directly in the interactive user desktop session (WinSta0\\Default) via WMI.
+
+    This ensures GUI windows (Chrome, Notepad, Calc) appear visibly on the user's active screen
+    even when the Python server is running under a background task or isolated desktop.
+    """
+    if not cmd_line or not cmd_line.strip():
+        return False
+    cmd_clean = cmd_line.strip()
+
+    # 1. Primary: WMI Win32_Process.Create via PowerShell
+    try:
+        ps_script = (
+            f"$cmd = @'\n{cmd_clean}\n'@\n"
+            f"$res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine = $cmd}}\n"
+            f"if ($res.ReturnValue -eq 0) {{ exit 0 }} else {{ exit $res.ReturnValue }}\n"
+        )
+        p = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            timeout=6,
+        )
+        if p.returncode == 0:
+            return True
+    except Exception as exc:
+        print(f"[browser_control] WMI launch error: {exc}")
+
+    # 2. Secondary: Switch thread desktop to WinSta0\\Default and ShellExecuteW
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+        if hdesk:
+            user32.SetThreadDesktop(hdesk)
+        ret = ctypes.windll.shell32.ShellExecuteW(None, "open", cmd_clean, None, None, 1)
+        if ret > 32:
+            return True
+    except Exception as exc:
+        print(f"[browser_control] ShellExecuteW fallback error: {exc}")
+
+    # 3. Tertiary: Direct subprocess.Popen with WinSta0\\Default startupinfo
+    try:
+        si = subprocess.STARTUPINFO()
+        try:
+            si.lpDesktop = r"WinSta0\Default"
+        except Exception:
+            pass
+        subprocess.Popen(cmd_clean, startupinfo=si, shell=True)
+        return True
+    except Exception as exc:
+        print(f"[browser_control] Popen fallback error: {exc}")
+
+    return False
+
+
+def open_url_in_chrome(url: str, dry_run: bool = False, new_window: bool = True) -> bool:
+    """Open a URL in Google Chrome on the interactive user desktop in the foreground."""
     if not is_safe_url(url):
         print(f"[browser_control] refused unsafe url: {url!r}")
         return False
@@ -131,29 +215,35 @@ def open_url_in_chrome(url: str, dry_run: bool = False, new_window: bool = False
         print(f"[browser_control][dry-run] would open in Chrome (new_window={new_window}): {url}")
         return True
 
-    success = False
+    # 1. Primary: Direct Chrome launch on user's interactive desktop via WMI
+    chrome_exe = get_chrome_path() or "chrome.exe"
+    win_flag = "--new-window" if new_window else ""
+    cmd = f'"{chrome_exe}" {win_flag} "{url}"'.strip()
+    if launch_on_user_desktop(cmd):
+        return True
 
-    # 1. Primary Windows Shell dispatch (uses default browser registration, creates active tab)
+    # 2. Secondary: WMI PowerShell Start-Process with URL (uses user's default browser)
+    ps_cmd = f'powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process \'{url}\'"'
+    if launch_on_user_desktop(ps_cmd):
+        return True
+
+    # 3. Tertiary: Direct ShellExecuteW via ctypes
+    try:
+        import ctypes
+        args = f'--new-window "{url}"' if new_window else f'"{url}"'
+        ret = ctypes.windll.shell32.ShellExecuteW(None, "open", chrome_exe, args, None, 1)
+        if ret > 32:
+            return True
+    except Exception as exc:
+        print(f"[browser_control] ShellExecuteW chrome error: {exc}")
+
+    # 4. Fallback: os.startfile
     try:
         os.startfile(url)
-        success = True
+        return True
     except Exception as exc:
         print(f"[browser_control] os.startfile warning: {exc}")
-
-    # 2. Specific Chrome binary launch (for explicit Chrome executable)
-    chrome_exe = get_chrome_path()
-    if chrome_exe:
-        try:
-            cmd = [chrome_exe]
-            if new_window:
-                cmd.append("--new-window")
-            cmd.append(url)
-            subprocess.Popen(cmd, shell=False)
-            success = True
-        except Exception as exc:
-            print(f"[browser_control] error launching chrome binary: {exc}")
-
-    return success
+        return False
 
 
 # --- Background Search Fetcher -------------------------------------------
@@ -228,9 +318,34 @@ def _async_cache_results(query: str):
 
 # --- Chrome Search Execution ---------------------------------------------
 
+def clean_search_query(query: str) -> str:
+    """Clean voice/natural language preambles and suffixes from a search query."""
+    clean_q = query.strip()
+    while True:
+        prev = clean_q
+        clean_q = re.sub(
+            r"^(?:in|for|to|about|search\s+for|search\s+karo|search|dhundo|likho|type\s+karo|"
+            r"par|pe|me|mein|usme|usmein|isme|ismein|uspar|ispar|"
+            r"uske\s+search\s*bar\s*\b(?:mein|me)\b(?:\s+jakar)?|"
+            r"search\s*bar\s*\b(?:mein|me)\b(?:\s+jakar)?)\s+",
+            "",
+            clean_q,
+            flags=re.IGNORECASE,
+        ).strip()
+        clean_q = re.sub(
+            r"\s+(?:search\s+karo|search|dhundo|kholo|chalao|likho|type\s+karo)$",
+            "",
+            clean_q,
+            flags=re.IGNORECASE,
+        ).strip()
+        if clean_q == prev:
+            break
+    return clean_q
+
+
 def execute_chrome_search(query: str, dry_run: bool = False) -> tuple[bool, str]:
     """Execute search in Chrome browser and cache organic links."""
-    clean_q = query.strip()
+    clean_q = clean_search_query(query)
     if not clean_q:
         return False, "What would you like me to search for on Chrome?"
 
@@ -238,7 +353,7 @@ def execute_chrome_search(query: str, dry_run: bool = False) -> tuple[bool, str]
     _STATE["last_query"] = clean_q
     _STATE["active_site"] = "google"
 
-    open_url_in_chrome(search_url, dry_run=dry_run)
+    open_url_in_chrome(search_url, dry_run=dry_run, new_window=True)
 
     if dry_run:
         _STATE["results"] = [
@@ -248,9 +363,76 @@ def execute_chrome_search(query: str, dry_run: bool = False) -> tuple[bool, str]
         _async_cache_results(clean_q)
 
     # Determine Hinglish vs English reply
-    if any(w in clean_q.lower() for w in ("karo", "khol", "chalao", "dhundo")):
+    if any(w in (query + " " + clean_q).lower() for w in ("karo", "khol", "chalao", "dhundo", "likho", "bar", "usme", "usmein")):
         return True, f"Chrome me search kar raha hoon: {clean_q}."
     return True, f"Opening Chrome and searching for {clean_q}."
+
+
+def search_and_click_result(
+    query: str,
+    target_spec: str = "first",
+    dry_run: bool = False,
+) -> tuple[bool, str]:
+    """Execute search in Chrome and automatically open the target result link in the foreground."""
+    clean_q = clean_search_query(query)
+    if not clean_q:
+        return False, "What would you like me to search for on Chrome?"
+
+    spec_clean = (target_spec or "first").lower().strip()
+    target_idx = 0
+    for word, idx in _ORDINALS_MAP.items():
+        if re.search(rf"\b{re.escape(word)}\b", spec_clean):
+            target_idx = idx
+            break
+
+    # 1. Known top-level service shortcut
+    q_low = clean_q.lower()
+    if q_low in KNOWN_SITES and target_idx == 0:
+        direct_url = KNOWN_SITES[q_low]
+        _STATE["last_query"] = clean_q
+        _STATE["active_site"] = q_low
+        open_url_in_chrome(direct_url, dry_run=dry_run, new_window=True)
+        if any(w in (query + " " + spec_clean).lower() for w in ("karo", "kholo", "chalao", "pehli", "pehla", "pahli", "pahla", "pehle", "pahle", "link")):
+            return True, f"Chrome me {clean_q} search karke pehli link khol raha hoon."
+        return True, f"Searching for {clean_q} on Chrome and opening the first result."
+
+    # 2. Results fetch or dry-run mock
+    if dry_run:
+        results = [
+            {"title": f"Top result for {clean_q}", "url": f"https://en.wikipedia.org/wiki/{urllib.parse.quote(clean_q)}", "snippet": "Sample result"}
+        ]
+    else:
+        results = _fetch_search_results(clean_q)
+
+    if not results:
+        lucky_url = f"https://www.google.com/search?btnI=1&q={urllib.parse.quote_plus(clean_q)}"
+        _STATE["last_query"] = clean_q
+        open_url_in_chrome(lucky_url, dry_run=dry_run, new_window=True)
+        if any(w in (query + " " + spec_clean).lower() for w in ("karo", "kholo", "chalao", "pehli", "pehla")):
+            return True, f"Chrome me {clean_q} search karke top result khol raha hoon."
+        return True, f"Searching for {clean_q} on Chrome and opening the top result."
+
+    if target_idx >= len(results):
+        target_idx = len(results) - 1
+
+    selected = results[target_idx]
+    title = selected.get("title", f"Result for {clean_q}")
+    url = selected.get("url", "")
+    if not url or not is_safe_url(url):
+        url = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_q)}"
+
+    _STATE["last_query"] = clean_q
+    _STATE["results"] = results
+    open_url_in_chrome(url, dry_run=dry_run, new_window=True)
+
+    ordinal_names = ["first", "second", "third", "fourth", "fifth"]
+    ord_en = ordinal_names[target_idx] if target_idx < len(ordinal_names) else f"number {target_idx+1}"
+    ord_hi = "pehli" if target_idx == 0 else ("dusri" if target_idx == 1 else "teesri")
+
+    if any(w in (query + " " + spec_clean).lower() for w in ("karo", "kholo", "chalao", "pehli", "pehla", "dusra", "dusri", "link")):
+        return True, f"Chrome me {clean_q} search karke {ord_hi} link khol raha hoon: {title}."
+    return True, f"Searching for {clean_q} on Chrome and opening the {ord_en} result: {title}."
+
 
 
 # --- Search Result Link Clicking -----------------------------------------
@@ -391,7 +573,26 @@ _CHROME_OPEN_WITH_SEARCH_RE = re.compile(
     re.IGNORECASE,
 )
 
-# 3. Search in Chrome
+# 3. Compound: Search query AND Click/Open specific result link
+_COMPOUND_SEARCH_CLICK_RE = re.compile(
+    rf"^{_RETRY_PREFIX}(?:(?:hey\s+|ok\s+)?jarvis\s+|please\s+|pls\s+|kripya\s+|zara\s+)?"
+    r"(?:(?:open|kholo|chalao)\s+(?:the\s+)?(?:google\s+)?(?:chrome|crome|browser)\s*(?:aur|and|,)?\s*)?"
+    r"(?:(?:google\s+)?(?:chrome|crome|browser)\s+(?:open\s+karo|kholo|chalao)\s*(?:aur|and|,)?\s*)?"
+    r"(?:"
+    # Pattern A: uske search bar me [query] likho aur [ordinal] link click karo
+    r"(?:(?:uske\s+)?search\s*bar\s+\b(?:mein|me)\b\s*(?:jakar)?\s*(.+?)\s*(?:likho|type\s+karo|search\s+karo|dal\s+do)"
+    r"(?:\s*(?:aur|and|,)?\s*(?:jo\s+)?([a-z0-9]+)?\s*(?:link|result|website)\s*(?:hai)?\s*(?:use)?\s*(?:click\s*(?:kar\s+do|karo)?|kholo|open\s*(?:kar\s+do|karo)?))?)"
+    r"|"
+    # Pattern C: chrome me search karo [query] aur [ordinal] link kholo
+    r"(?:(?:google\s+)?(?:chrome|crome|browser)\s+\b(?:par|pe|me|mein)\b\s*(?:search\s+karo\s+|dhundo\s+)?(.+?)\s*(?:aur|and|,)\s*(?:jo\s+)?([a-z0-9]+)?\s*(?:link|result|website)\s*(?:kholo|click\s+karo|open\s+karo))"
+    r"|"
+    # Pattern B: [query] (search karo) aur/and click on the [ordinal] link (that what it appear)
+    r"(?:(?:search\s+(?:for\s+)?|open\s+)?(.+?)(?:\s+search\s+karo)?\s+(?:and|aur)\s+(?:jo\s+)?(?:click\s+(?:on\s+)?|open\s+)?(?:the\s+)?([a-z0-9]+)?\s*(?:link|result|website)(?:\s+hai)?(?:\s+use)?(?:\s+click\s*(?:kar\s+do|karo)?|\s+kholo|\s+open\s*(?:kar\s+do|karo)?)?(?:\s+that\s+.*)?)"
+    r")$",
+    re.IGNORECASE,
+)
+
+# 4. Search in Chrome
 _CHROME_SEARCH_RE = re.compile(
     rf"^{_RETRY_PREFIX}(?:(?:hey\s+|ok\s+)?jarvis\s+|please\s+|pls\s+|kripya\s+|zara\s+)?"
     r"(?:open\s+(?:google\s+)?(?:chrome|crome|browser)\s+(?:and|aur)?\s*(?:search\s+(?:for)?|dhundo|find)?\s*(.+)|"
@@ -401,7 +602,7 @@ _CHROME_SEARCH_RE = re.compile(
     re.IGNORECASE,
 )
 
-# 4. Click Result Link
+# 5. Click Result Link
 _LINK_CLICK_RE = re.compile(
     rf"^{_RETRY_PREFIX}(?:(?:hey\s+|ok\s+)?jarvis\s+|please\s+|pls\s+|kripya\s+|zara\s+)?"
     r"(?:click\s+(?:on\s+)?(?:the\s+)?([a-z0-9]+)?\s*(?:link|result|website)|"
@@ -411,7 +612,7 @@ _LINK_CLICK_RE = re.compile(
     re.IGNORECASE,
 )
 
-# 5. Gmail Drafting in Chrome
+# 6. Gmail Drafting in Chrome
 _GMAIL_DRAFT_RE = re.compile(
     rf"^{_RETRY_PREFIX}(?:(?:hey\s+|ok\s+)?jarvis\s+|please\s+|pls\s+|kripya\s+|zara\s+)?"
     r"(?:(?:open\s+gmail\s+(?:and|aur)?\s*)?"
@@ -454,7 +655,18 @@ def try_browser_control(text: str, dry_run: bool = False) -> tuple[bool, str]:
         target_spec = lm.group(1) or lm.group(2) or lm.group(3) or "first"
         return click_result_link(target_spec, dry_run=dry_run)
 
-    # C. Check Chrome open with search query (e.g. "Chrome open karo and search for latest news")
+    # C. Check Compound Search & Click intent (e.g. "search python and click first link", "uske search bar me Gmail likho aur pehli link click kar do")
+    cm = _COMPOUND_SEARCH_CLICK_RE.match(clean_text)
+    if cm:
+        groups = [g for g in cm.groups() if g is not None]
+        query_val = groups[0].strip() if groups else ""
+        target_spec_val = groups[1].strip() if len(groups) > 1 else None
+        if query_val:
+            if target_spec_val:
+                return search_and_click_result(query_val, target_spec_val, dry_run=dry_run)
+            return execute_chrome_search(query_val, dry_run=dry_run)
+
+    # D. Check Chrome open with search query (e.g. "Chrome open karo and search for latest news")
     om = _CHROME_OPEN_WITH_SEARCH_RE.match(clean_text)
     if om:
         query = om.group(1).strip()
@@ -462,7 +674,7 @@ def try_browser_control(text: str, dry_run: bool = False) -> tuple[bool, str]:
         if query:
             return execute_chrome_search(query, dry_run=dry_run)
 
-    # D. Check Chrome search intent
+    # E. Check Chrome search intent
     sm = _CHROME_SEARCH_RE.match(clean_text)
     if sm:
         query = sm.group(1) or sm.group(2) or sm.group(3) or sm.group(4) or ""
@@ -471,7 +683,7 @@ def try_browser_control(text: str, dry_run: bool = False) -> tuple[bool, str]:
         if query:
             return execute_chrome_search(query, dry_run=dry_run)
 
-    # E. Check Plain Open Chrome intent (e.g. "Jarvis Chrome open karo", "open chrome", "crome open karo")
+    # F. Check Plain Open Chrome intent (e.g. "Jarvis Chrome open karo", "open chrome", "crome open karo")
     op = _OPEN_CHROME_PLAIN_RE.match(clean_text)
     if op:
         open_url_in_chrome("https://www.google.com", dry_run=dry_run, new_window=True)

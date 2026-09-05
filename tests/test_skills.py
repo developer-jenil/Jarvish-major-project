@@ -249,6 +249,34 @@ class TestSkills(unittest.TestCase):
         state = get_browser_state()
         self.assertIn("mail.google.com", state["last_opened_url"])
 
+    def test_browser_control_compound_search_and_click(self):
+        """Compound voice commands like search Gmail and click first link should execute directly."""
+        reset_browser_state()
+        cases = [
+            (
+                "Chrome kholo aur uske search bar Mein jakar Gmail likho aur jo Pahli link hai use click kar do",
+                "https://mail.google.com"
+            ),
+            (
+                "Gmail and click on the first link that what it appear",
+                "https://mail.google.com"
+            ),
+            (
+                "search python tutorial and click first link",
+                "https://en.wikipedia.org/wiki/python%20tutorial"
+            ),
+            (
+                "uske search bar me Gmail likho",
+                "https://www.google.com/search?q=Gmail"
+            ),
+        ]
+        for phrase, expected_url in cases:
+            reset_browser_state()
+            handled, msg = try_browser_control(phrase, dry_run=True)
+            self.assertTrue(handled, f"Failed for {phrase}")
+            state = get_browser_state()
+            self.assertEqual(state["last_opened_url"], expected_url, f"URL mismatch for {phrase}")
+
 
 if __name__ == "__main__":
     unittest.main()

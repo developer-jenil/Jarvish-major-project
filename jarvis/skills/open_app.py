@@ -306,8 +306,20 @@ def resolve_target(name: str) -> tuple[str, str, str | None]:
     return "app", key, None
 
 
+def _get_desktop_startupinfo() -> subprocess.STARTUPINFO:
+    """Create a STARTUPINFO struct targeting the interactive user desktop."""
+    si = subprocess.STARTUPINFO()
+    try:
+        si.lpDesktop = r"WinSta0\Default"
+    except Exception:
+        pass
+    return si
+
+
 def _shell_open(target: str, arg: str | None = None) -> bool:
-    """Open `target` on Windows, after validating it against an allowlist."""
+    """Open `target` on Windows on the interactive user desktop."""
+    si = _get_desktop_startupinfo()
+
     if arg is not None:
         if not _is_safe_app_target(target):
             print(f"[open_app] refused: target {target!r} failed safety check")
@@ -315,61 +327,119 @@ def _shell_open(target: str, arg: str | None = None) -> bool:
         if not _is_safe_url(arg):
             print(f"[open_app] refused: arg {arg!r} is not an http(s) URL")
             return False
-        cmd_target = target
-        if target in ("chrome", "google chrome"):
+
+        if target in ("chrome", "google chrome", "crome", "google crome"):
             try:
-                from jarvis.skills.browser_control import get_chrome_path
-                cp = get_chrome_path()
-                if cp:
-                    cmd_target = cp
+                from jarvis.skills.browser_control import open_url_in_chrome
+                return open_url_in_chrome(arg, new_window=True)
             except Exception:
                 pass
+
         try:
-            subprocess.Popen([cmd_target, arg], shell=False)
+            from jarvis.skills.browser_control import launch_on_user_desktop
+            if launch_on_user_desktop(f'"{target}" "{arg}"'):
+                return True
+        except Exception:
+            pass
+
+        try:
+            subprocess.Popen([target, arg], startupinfo=si, shell=False)
             return True
         except (FileNotFoundError, OSError) as e:
-            print(f"[open_app] could not launch {cmd_target!r} {arg!r}: {e}")
+            print(f"[open_app] could not launch {target!r} {arg!r}: {e}")
             return False
     else:
         # Single target: either a known app name or a known URL.
         if _is_safe_url(target):
+            try:
+                from jarvis.skills.browser_control import open_url_in_chrome
+                if open_url_in_chrome(target, new_window=True):
+                    return True
+            except Exception:
+                pass
+            try:
+                from jarvis.skills.browser_control import launch_on_user_desktop
+                ps_cmd = f'powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process \'{target}\'"'
+                if launch_on_user_desktop(ps_cmd):
+                    return True
+            except Exception:
+                pass
+            try:
+                subprocess.Popen(["explorer.exe", target], startupinfo=si, shell=False)
+                return True
+            except Exception:
+                pass
             try:
                 os.startfile(target)
                 return True
             except OSError as e:
                 print(f"[open_app] could not open URL {target!r}: {e}")
                 return False
+
         if _is_safe_app_target(target):
             if target in ("chrome", "google chrome", "crome", "google crome"):
                 try:
                     from jarvis.skills.browser_control import open_url_in_chrome
-                    return open_url_in_chrome("https://www.google.com")
+                    return open_url_in_chrome("https://www.google.com", new_window=True)
                 except Exception:
                     pass
+
+            # 1. Primary: WMI interactive session launcher
+            try:
+                from jarvis.skills.browser_control import launch_on_user_desktop
+                # Handle URI schemes like ms-settings:, calc:, etc.
+                if ":" in target and not target.endswith(".exe"):
+                    ps_cmd = f'powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process \'{target}\'"'
+                    if launch_on_user_desktop(ps_cmd):
+                        return True
+                else:
+                    candidates = [target]
+                    if not target.endswith(".exe") and ":" not in target:
+                        candidates.append(target + ".exe")
+                    for c in candidates:
+                        if launch_on_user_desktop(c):
+                            return True
+                    # Try PowerShell Start-Process as well
+                    ps_cmd = f'powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process \'{target}\'"'
+                    if launch_on_user_desktop(ps_cmd):
+                        return True
+            except Exception as exc:
+                print(f"[open_app] launch_on_user_desktop warning: {exc}")
+
+            # 2. Secondary: Direct launch on interactive desktop with startupinfo
+            candidates = [target]
+            if not target.endswith(".exe") and ":" not in target:
+                candidates.append(target + ".exe")
+
+            for c in candidates:
+                try:
+                    subprocess.Popen([c], startupinfo=si, shell=False)
+                    return True
+                except (FileNotFoundError, OSError):
+                    pass
+
+            # 3. Tertiary: PowerShell Start-Process with startupinfo
+            try:
+                ps_script = f'Start-Process "{target}"'
+                subprocess.Popen(
+                    ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    startupinfo=si,
+                    shell=False,
+                )
+                return True
+            except Exception:
+                pass
+
+            # 4. Fallback: os.startfile
             try:
                 os.startfile(target)
                 return True
             except OSError:
                 pass
-            # Fallback 1: try with .exe
-            try:
-                os.startfile(target + ".exe")
-                return True
-            except OSError:
-                pass
-            # Fallback 2: try URI scheme protocol (e.g. "calc:" or "whatsapp:")
-            try:
-                os.startfile(target + ":")
-                return True
-            except OSError:
-                pass
-            # Fallback 3: try subprocess list launch
-            try:
-                subprocess.Popen([target], shell=False)
-                return True
-            except (FileNotFoundError, OSError) as e:
-                print(f"[open_app] could not open {target!r}: {e}")
-                return False
+
+            print(f"[open_app] could not open {target!r}")
+            return False
+
         print(f"[open_app] refused: target {target!r} failed safety check")
         return False
 

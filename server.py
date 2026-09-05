@@ -110,9 +110,17 @@ def _wakeword_worker():
 
 # --- Routes ---
 
+@app.after_request
+def add_cache_control_headers(response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", cache_bust=int(time.time()))
 
 
 @app.route("/api/status", methods=["GET"])
