@@ -57,6 +57,8 @@ APPS: dict[str, str] = {
     # --- Browsers -------------------------------------------------------
     "chrome":        "chrome",
     "google chrome": "chrome",
+    "crome":         "chrome",
+    "google crome":  "chrome",
     "chromium":      "chrome",
     "edge":          "msedge",
     "microsoft edge": "msedge",
@@ -151,7 +153,7 @@ WEBSITES: dict[str, tuple[str, str | None]] = {
 # action) instead of opening the browser empty + a separate tab.
 BROWSERS: set[str] = {
     "chrome", "edge", "firefox", "brave", "opera", "chromium",
-    "google chrome", "microsoft edge", "mozilla",
+    "google chrome", "microsoft edge", "mozilla", "crome", "google crome",
 }
 
 # Verbs that signal an "open/launch" command. Includes English and Hinglish verbs
@@ -313,11 +315,20 @@ def _shell_open(target: str, arg: str | None = None) -> bool:
         if not _is_safe_url(arg):
             print(f"[open_app] refused: arg {arg!r} is not an http(s) URL")
             return False
+        cmd_target = target
+        if target in ("chrome", "google chrome"):
+            try:
+                from jarvis.skills.browser_control import get_chrome_path
+                cp = get_chrome_path()
+                if cp:
+                    cmd_target = cp
+            except Exception:
+                pass
         try:
-            subprocess.Popen([target, arg], shell=False)
+            subprocess.Popen([cmd_target, arg], shell=False)
             return True
         except (FileNotFoundError, OSError) as e:
-            print(f"[open_app] could not launch {target!r} {arg!r}: {e}")
+            print(f"[open_app] could not launch {cmd_target!r} {arg!r}: {e}")
             return False
     else:
         # Single target: either a known app name or a known URL.
@@ -329,6 +340,12 @@ def _shell_open(target: str, arg: str | None = None) -> bool:
                 print(f"[open_app] could not open URL {target!r}: {e}")
                 return False
         if _is_safe_app_target(target):
+            if target in ("chrome", "google chrome", "crome", "google crome"):
+                try:
+                    from jarvis.skills.browser_control import open_url_in_chrome
+                    return open_url_in_chrome("https://www.google.com")
+                except Exception:
+                    pass
             try:
                 os.startfile(target)
                 return True
@@ -434,6 +451,12 @@ def try_open_app(text: str, dry_run: bool = False) -> tuple[bool, str]:
 
     # --- Browser + search query: open that browser straight to Google. ---
     if query and target in BROWSERS and kind == "app":
+        if target in ("chrome", "google chrome", "crome", "google crome"):
+            try:
+                from jarvis.skills.browser_control import execute_chrome_search
+                return execute_chrome_search(query, dry_run=dry_run)
+            except Exception as e:
+                print(f"[open_app] browser_control fallback: {e}")
         url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
         if dry_run:
             print(f"[open_app][dry-run] would launch browser {value!r} -> {url}")
@@ -460,7 +483,18 @@ def try_open_app(text: str, dry_run: bool = False) -> tuple[bool, str]:
         if dry_run:
             print(f"[open_app][dry-run] would open URL: {to_open}")
         else:
+            try:
+                from jarvis.skills.browser_control import _STATE
+                _STATE["last_opened_url"] = to_open
+            except Exception:
+                pass
             _shell_open(to_open)
+        if target == "gmail":
+            try:
+                from jarvis.skills.browser_control import _STATE
+                _STATE["active_site"] = "gmail"
+            except Exception:
+                pass
         if query and tmpl:
             return True, f"Opening {target} and searching for {query}."
         return True, f"Opening {target}."

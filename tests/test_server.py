@@ -103,6 +103,109 @@ class TestServer(unittest.TestCase):
         # Check standard WAV RIFF header
         self.assertTrue(response.data.startswith(b"RIFF"))
 
+    def test_browser_endpoints(self):
+        """Test dedicated browser skill REST endpoints."""
+        # 1. Search endpoint
+        res = self.client.post(
+            "/api/skills/browser/search",
+            data=json.dumps({"query": "python tutorials", "dry_run": True}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertIn("browser_state", data)
+
+        # 2. Click endpoint
+        res = self.client.post(
+            "/api/skills/browser/click",
+            data=json.dumps({"target": "first", "dry_run": True}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+
+        # 3. Gmail draft endpoint
+        res = self.client.post(
+            "/api/skills/browser/gmail-draft",
+            data=json.dumps({"to": "prof sharma", "message": "project is ready", "dry_run": True}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+
+        # 4. Status endpoint
+        res = self.client.get("/api/skills/browser/status")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertIn("browser_state", data)
+
+    def test_command_browser_control(self):
+        """Voice command routing to browser-control skill."""
+        # Plain open chrome command
+        res = self.client.post(
+            "/api/command",
+            data=json.dumps({"text": "open the chrome", "speak": False}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("skill"), "browser-control")
+        self.assertEqual(data.get("open_url"), "https://www.google.com")
+
+        # Conversational retry open chrome command
+        res = self.client.post(
+            "/api/command",
+            data=json.dumps({"text": "I said that open the chrome", "speak": False}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("skill"), "browser-control")
+        self.assertEqual(data.get("open_url"), "https://www.google.com")
+
+        # Chrome search command
+        res = self.client.post(
+            "/api/command",
+            data=json.dumps({"text": "open chrome and search for artificial intelligence", "speak": False}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("skill"), "browser-control")
+        self.assertIn("Chrome", data.get("reply"))
+        self.assertIn("https://www.google.com/search?q=", data.get("open_url", ""))
+
+        # Link click command
+        res = self.client.post(
+            "/api/command",
+            data=json.dumps({"text": "click on the first link", "speak": False}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("skill"), "browser-control")
+
+        # Gmail draft command
+        res = self.client.post(
+            "/api/command",
+            data=json.dumps({"text": "draft a mail to prof sharma saying project is ready", "speak": False}),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("skill"), "browser-control")
+        self.assertIn("Gmail", data.get("reply"))
+        self.assertIn("mail.google.com", data.get("open_url", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

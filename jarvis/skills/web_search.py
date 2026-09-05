@@ -51,7 +51,11 @@ def match_intent(text: str) -> str | None:
         return None
     m = _QUERY_EXTRACT.search(text)
     if m:
-        return m.group(1).strip()
+        query = m.group(1).strip()
+        # Do not hijack local time, date, or day queries
+        if re.search(r"^(?:the\s+)?(?:today'?s\s+)?(?:time|date|day)(?:\s+(?:is\s+it|today|now))?$", query, re.IGNORECASE):
+            return None
+        return query
     return None
 
 

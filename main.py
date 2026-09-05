@@ -44,8 +44,14 @@ from jarvis import brain
 from jarvis.audio import record
 from jarvis.stt import transcribe
 from jarvis.tts import speak
-from jarvis.wakeword import listen_for_wakeword
-from jarvis.skills import try_open_app, try_whatsapp, try_send_email, try_web_search
+from jarvis.skills import (
+    try_open_app,
+    try_datetime,
+    try_whatsapp,
+    try_send_email,
+    try_web_search,
+    try_browser_control,
+)
 
 # How many seconds to record after the wake word fires. Long enough for a
 # full command ("open chrome and search for cats"), short enough to feel
@@ -54,28 +60,24 @@ COMMAND_SECONDS = 5
 
 # A short spoken acknowledgement so the user knows Jarvis woke up and is
 # now listening for their command.
-ACK_PHRASE = "Yes?"
+# What the assistant says right after waking up to let the user know it is
+# listening. Short and friendly.
+ACK_PHRASE = "Yes, boss?"
 
-# We keep a little conversation history so follow-up questions have context
-# within one session. It resets when you restart the program. Each entry is
-# a dict like {"role": "user"/"assistant", "content": "..."}.
-_history: list[dict] = []
-MAX_HISTORY_TURNS = 6  # keep the last 6 messages (3 back-and-forths)
+# Rolling conversation history so the LLM remembers previous turns.
+# Each entry is {"role": "user"|"assistant", "content": "..."}.
+# We cap this to the last N turns so we don't blow past the model's context
+# window or inflate API token cost.
+_history: list[dict[str, str]] = []
+MAX_HISTORY_TURNS = 10
 
 
 def handle_command(text: str) -> None:
-    """Send one transcribed command to the right handler and speak back.
+    """Route a single transcribed command to a skill or the LLM brain.
 
-    Skills are checked BEFORE the brain, in this order:
-      1. open_app   — fast, offline, no API key needed
-      2. whatsapp   — opens WA Web (needs internet + logged-in session)
-      3. email      — sends via SMTP (needs .env credentials)
-      4. web_search — queries DuckDuckGo locally (needs internet)
-    Only if no skill matches does the request go to the LLM brain.
+    Separated out so tests can call it with raw strings without needing a mic.
     """
     global _history
-
-    # Windows console (cp1252) cannot print Devanagari/etc. characters.
     try:
         print(f"[main] you said: {text!r}")
     except UnicodeEncodeError:
@@ -84,7 +86,9 @@ def handle_command(text: str) -> None:
 
     # 1. SKILLS (offline-first where possible): try each in order.
     for skill_name, try_fn in (
+        ("browser-control", try_browser_control),
         ("open-app",  try_open_app),
+        ("datetime",  try_datetime),
         ("whatsapp",  try_whatsapp),
         ("email",     try_send_email),
         ("web-search", try_web_search),

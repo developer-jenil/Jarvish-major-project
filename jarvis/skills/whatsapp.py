@@ -265,6 +265,12 @@ def try_whatsapp(text: str, dry_run: bool = False) -> tuple[bool, str]:
         return True, f"Would open WhatsApp Web for {display_name}: \"{body}\""
 
     try:
+        from jarvis.skills.browser_control import _STATE
+        _STATE["last_opened_url"] = url or "https://web.whatsapp.com"
+    except Exception:
+        pass
+
+    try:
         if url:
             webbrowser.open(url)
             return True, (

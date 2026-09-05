@@ -62,16 +62,29 @@ FALLBACK_MODELS = [
     "meta-llama/llama-3-8b-instruct",
 ]
 
-# The "system prompt" tells the model who it is and how to behave.
-SYSTEM_PROMPT = (
-    "You are JARVIS, a highly capable, human-like voice assistant running on a Windows PC. "
-    "Follow these strict spoken voice guidelines:\n"
-    "1. Speak directly in natural conversational Hinglish (Hindi + English written in Latin alphabet) or English as appropriate.\n"
-    "2. NEVER include translations in parentheses or brackets (e.g. NEVER write 'Namaste (Hello)' or 'madad (help)'). Speak your thought directly once.\n"
-    "3. NEVER use markdown formatting, asterisks, hashes, or bullet points (*, #, -). Your text is read out loud by text-to-speech.\n"
-    "4. Keep your replies short, natural, friendly, and conversational (1 to 3 sentences maximum), like a real smart assistant.\n"
-    "5. CRITICAL: You are a conversation model and do not directly open Windows applications. If asked to open an app, instruct the user to say 'open <app_name>' or '<app_name> kholo'. NEVER claim that you opened an application."
-)
+import datetime
+
+# The "system prompt" tells the model who it is and how to behave with live system clock context.
+def build_system_prompt() -> str:
+    now = datetime.datetime.now()
+    time_str = now.strftime("%I:%M %p")
+    date_str = now.strftime("%A, %d %B %Y")
+    return (
+        "You are JARVIS, a highly capable, human-like voice assistant running on a Windows PC.\n"
+        "[REAL-TIME SYSTEM INFO]\n"
+        f"- Current Local Time: {time_str}\n"
+        f"- Current Date: {date_str}\n"
+        "- Platform: Windows PC\n\n"
+        "Follow these strict spoken voice guidelines:\n"
+        "1. Speak directly in natural conversational Hinglish (Hindi + English written in Latin alphabet) or English as appropriate.\n"
+        "2. ALWAYS provide accurate, truthful facts. If asked about the current time or date, always refer to the REAL-TIME SYSTEM INFO above.\n"
+        "3. NEVER include translations in parentheses or brackets (e.g. NEVER write 'Namaste (Hello)' or 'madad (help)'). Speak your thought directly once.\n"
+        "4. NEVER use markdown formatting, asterisks, hashes, or bullet points (*, #, -). Your text is read out loud by text-to-speech.\n"
+        "5. Keep your replies short, natural, friendly, and conversational (1 to 3 sentences maximum), like a real smart assistant.\n"
+        "6. CRITICAL: You are a conversation model and do not directly open Windows applications. If asked to open an app, instruct the user to say 'open <app_name>' or '<app_name> kholo'. NEVER claim that you opened an application."
+    )
+
+SYSTEM_PROMPT = build_system_prompt()
 
 
 def load_api_key() -> str | None:
@@ -109,9 +122,9 @@ def ask(user_text: str, model: str = DEFAULT_MODEL, history=None) -> str:
     if not api_key:
         return "[brain] No OPENROUTER_API_KEY set — cannot call the model."
 
-    # Build the conversation: system prompt first, then any history, then
+    # Build the conversation: system prompt with live clock first, then any history, then
     # the new user message.
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": build_system_prompt()}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})

@@ -455,7 +455,14 @@ document.addEventListener("DOMContentLoaded", () => {
       isExecuting = false;
 
       if (data.success) {
-        appendFeedMessage("assistant", data.reply, data.audio_url);
+        appendFeedMessage("assistant", data.reply, data.audio_url, data.open_url);
+        if (data.open_url) {
+          try {
+            window.open(data.open_url, "_blank");
+          } catch (e) {
+            console.warn("window.open blocked:", e);
+          }
+        }
         playSpokenReply(data.audio_url);
       } else {
         appendFeedMessage("assistant", "An error occurred: " + (data.error || "Unknown error"));
@@ -577,7 +584,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- 6. Conversation Feed ---
-  function appendFeedMessage(role, content, audioUrl = null) {
+  function appendFeedMessage(role, content, audioUrl = null, openUrl = null) {
     const msgDiv = document.createElement("div");
     msgDiv.className = `feed-message ${role}`;
 
@@ -586,12 +593,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const authorName = role === "user" ? "OPERATOR" : "J.A.R.V.I.S.";
 
     let actionHtml = "";
-    if (audioUrl && role === "assistant") {
-      actionHtml = `
-        <div class="msg-actions">
-          <button class="audio-replay-btn" title="Replay voice audio" data-audio="${audioUrl}">🔊 Replay</button>
-        </div>
-      `;
+    if (role === "assistant") {
+      let replayBtn = "";
+      if (audioUrl) {
+        replayBtn = `<button class="audio-replay-btn" title="Replay voice audio" data-audio="${audioUrl}">🔊 Replay</button>`;
+      }
+      let linkBtn = "";
+      if (openUrl) {
+        let label = "🌐 Open in Chrome";
+        if (openUrl.includes("mail.google.com")) {
+          label = "✉️ Open Gmail Draft";
+        } else if (openUrl.includes("google.com/search")) {
+          label = "🔍 View Search in Chrome";
+        }
+        linkBtn = `<a href="${openUrl}" target="_blank" rel="noopener noreferrer" class="hud-link-btn" title="Open in Chrome: ${openUrl}">${label}</a>`;
+      }
+      if (replayBtn || linkBtn) {
+        actionHtml = `<div class="msg-actions">${linkBtn}${replayBtn}</div>`;
+      }
     }
 
     msgDiv.innerHTML = `
@@ -654,7 +673,14 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({ app: appName })
         });
         const res = await resp.json();
-        appendFeedMessage("assistant", res.message);
+        appendFeedMessage("assistant", res.message, null, res.open_url);
+        if (res.open_url) {
+          try {
+            window.open(res.open_url, "_blank");
+          } catch (e) {
+            console.warn("window.open blocked:", e);
+          }
+        }
         playSpokenReply(`/api/tts?text=${encodeURIComponent(res.message)}`);
       } catch (e) {
         appendFeedMessage("assistant", `Failed to launch ${appName}`);

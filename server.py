@@ -29,9 +29,17 @@ from jarvis.tts import (
     AVAILABLE_EDGE_VOICES,
 )
 from jarvis.skills.open_app import try_open_app
+from jarvis.skills.datetime_skill import try_datetime
 from jarvis.skills.whatsapp import try_whatsapp, find_contact
 from jarvis.skills.email import try_send_email, find_emails
 from jarvis.skills.web_search import try_web_search, search_web
+from jarvis.skills.browser_control import (
+    try_browser_control,
+    execute_chrome_search,
+    click_result_link,
+    draft_gmail_in_chrome,
+    get_browser_state,
+)
 
 # --- Project Paths ---
 ROOT_DIR = Path(__file__).resolve().parent
@@ -143,7 +151,9 @@ def execute_command():
 
     # 1. Check Skills in priority order
     for skill_name, try_fn in (
+        ("browser-control", try_browser_control),
         ("open-app", try_open_app),
+        ("datetime", try_datetime),
         ("whatsapp", try_whatsapp),
         ("email", try_send_email),
         ("web-search", try_web_search),
@@ -162,13 +172,24 @@ def execute_command():
                     print(f"[server] tts playback warning: {e}")
 
             clean_reply = clean_text_for_speech(skill_msg)
-            return jsonify({
+            
+            # Check if any skill opened a browser / web URL
+            browser_state = get_browser_state()
+            open_url = browser_state.get("last_opened_url")
+
+            resp_data = {
                 "success": True,
                 "skill": skill_name,
                 "user_text": text,
                 "reply": skill_msg,
                 "audio_url": f"/api/tts?text={urllib.parse.quote(clean_reply)}&voice={urllib.parse.quote(voice)}&engine={urllib.parse.quote(engine)}"
-            })
+            }
+            if open_url:
+                resp_data["open_url"] = open_url
+                from jarvis.skills.browser_control import _STATE
+                _STATE["last_opened_url"] = None
+
+            return jsonify(resp_data)
 
     # 2. LLM Brain
     reply = brain.ask(text, history=_conversation_history)
@@ -213,7 +234,14 @@ def skill_open_app():
         cmd += f" and search for {query}"
 
     handled, msg = try_open_app(cmd, dry_run=dry_run)
-    return jsonify({"success": handled, "message": msg})
+    state = get_browser_state()
+    open_url = state.get("last_opened_url")
+    resp_data = {"success": handled, "message": msg}
+    if open_url:
+        resp_data["open_url"] = open_url
+        from jarvis.skills.browser_control import _STATE
+        _STATE["last_opened_url"] = None
+    return jsonify(resp_data)
 
 
 @app.route("/api/skills/whatsapp", methods=["POST"])
@@ -266,6 +294,65 @@ def skill_search():
         "success": True,
         "query": query,
         "results": results,
+    })
+
+
+@app.route("/api/skills/browser/search", methods=["POST"])
+def skill_browser_search():
+    data = request.get_json(force=True) or {}
+    query = (data.get("query") or "").strip()
+    dry_run = bool(data.get("dry_run", False))
+    if not query:
+        return jsonify({"success": False, "error": "Query required"}), 400
+    handled, msg = execute_chrome_search(query, dry_run=dry_run)
+    state = get_browser_state()
+    return jsonify({
+        "success": handled,
+        "message": msg,
+        "open_url": state.get("last_opened_url"),
+        "browser_state": state,
+    })
+
+
+@app.route("/api/skills/browser/click", methods=["POST"])
+def skill_browser_click():
+    data = request.get_json(force=True) or {}
+    target = data.get("target", "first")
+    dry_run = bool(data.get("dry_run", False))
+    handled, msg = click_result_link(target, dry_run=dry_run)
+    state = get_browser_state()
+    return jsonify({
+        "success": handled,
+        "message": msg,
+        "open_url": state.get("last_opened_url"),
+        "browser_state": state,
+    })
+
+
+@app.route("/api/skills/browser/gmail-draft", methods=["POST"])
+def skill_browser_gmail_draft():
+    data = request.get_json(force=True) or {}
+    to = (data.get("to") or "").strip()
+    message = (data.get("message") or "").strip()
+    subject = data.get("subject")
+    dry_run = bool(data.get("dry_run", False))
+    if not to:
+        return jsonify({"success": False, "error": "Recipient required"}), 400
+    handled, msg = draft_gmail_in_chrome(to, message, subject=subject, dry_run=dry_run)
+    state = get_browser_state()
+    return jsonify({
+        "success": handled,
+        "message": msg,
+        "open_url": state.get("last_opened_url"),
+        "browser_state": state,
+    })
+
+
+@app.route("/api/skills/browser/status", methods=["GET"])
+def skill_browser_status():
+    return jsonify({
+        "success": True,
+        "browser_state": get_browser_state(),
     })
 
 

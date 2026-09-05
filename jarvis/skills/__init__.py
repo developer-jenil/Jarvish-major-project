@@ -18,14 +18,26 @@ Modules:
 
 Exported:
     try_open_app(text, dry_run=False)      -> (handled, message)
+    try_datetime(text, dry_run=False)      -> (handled, message)
     try_whatsapp(text, dry_run=False)      -> (handled, message)
     try_send_email(text, dry_run=False)    -> (handled, message)
     try_web_search(text, dry_run=False)    -> (handled, message)
 """
 
 from .open_app import try_open_app
+from .datetime_skill import try_datetime
 from .whatsapp import try_whatsapp
 from .email import try_send_email
 from .web_search import try_web_search
+from .browser_control import try_browser_control, get_chrome_path, open_url_in_chrome
 
-__all__ = ["try_open_app", "try_whatsapp", "try_send_email", "try_web_search"]
+__all__ = [
+    "try_open_app",
+    "try_datetime",
+    "try_whatsapp",
+    "try_send_email",
+    "try_web_search",
+    "try_browser_control",
+    "get_chrome_path",
+    "open_url_in_chrome",
+]
