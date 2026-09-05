@@ -4,14 +4,19 @@ A "Hey Jarvis" personal voice assistant for Windows. Wakes on a custom hotword, 
 
 ## Status
 
-**Phase 3 — Skills (in progress).** The voice loop, wake word, and LLM brain are done and run locally, and the first skill — **"open any app"** — is implemented. The full development plan and team roles are tracked in the project discussion notes (`19 july major project discussion.md` on the Desktop).
+**Phase 4 — Complete.** The voice loop, wake word, LLM brain, and all four skills run fully. The assistant also supports a system tray icon for background operation.
 
 ### What works today
 - "Hey Jarvis" wake word (local, OpenWakeWord)
 - Speech-to-text (faster-whisper, Hindi + English)
-- LLM brain (OpenRouter cloud API — `tencent/hy3:free` by default)
+- LLM brain (OpenRouter cloud API — `meta-llama/llama-3.1-8b-instruct` by default)
 - Text-to-speech (Piper, offline)
-- **Open-any-app skill** — say e.g. *"open chrome"*, *"open notepad"*, *"open youtube and play despacito"*, *"open google and search for weather in mumbai"*, *"kholo calculator"*. Runs **offline** (no API key) and is checked before the brain.
+- **Open-any-app skill** — say e.g. *"open chrome"*, *"open notepad"*, *"open youtube and play despacito"*, *"kholo calculator"*. Runs **offline** (no API key).
+- **WhatsApp skill** — say e.g. *"send whatsapp to mom saying I will be late"*. Opens WhatsApp Web with a pre-filled message.
+- **Gmail email skill** — say e.g. *"send an email to prof sharma about the project update"*. Drafts and sends via SMTP (requires Google App Password).
+- **Web search skill** — say e.g. *"search for weather in mumbai"*, *"google latest python news"*, *"kya hai artificial intelligence"*. Fetches top results via DuckDuckGo and speaks them back.
+- **System tray mode** — set `JARVIS_TRAY=1` to minimise to tray instead of console.
+- Conversation memory (last 6 turns within a session).
 
 ## Quick start (developer)
 
@@ -19,49 +24,77 @@ A "Hey Jarvis" personal voice assistant for Windows. Wakes on a custom hotword, 
 # Activate the virtual environment (do this every time you open a new terminal)
 .\venv\Scripts\Activate.ps1
 
-# Install dependencies (empty for now, will fill in Phase 1)
+# Install dependencies (Phases 1–4)
 pip install -r requirements.txt
 
-# Run the assistant (only works after Phase 1)
+# Download the wake-word model (one-time)
+python -m jarvis.wakeword --download
+
+# Set up your .env file (copy .env.example, fill in the values)
+
+# Run the assistant (console mode)
 python main.py
+
+# Or run in system-tray mode
+$env:JARVIS_TRAY="1"; python main.py
 ```
 
 ## Tech stack
 
-- Wake word: OpenWakeWord (local)
-- Speech-to-text: faster-whisper (local, Hindi + English)
-- LLM brain: cloud (OpenAI / Anthropic / OpenRouter)
-- Text-to-speech: Piper (local)
-- WhatsApp: pywhatkit (v1) → Meta Cloud API (v2)
-- Gmail email: Gmail API (OAuth) / SMTP with app password
+| Component | Technology |
+|---|---|
+| Wake word | OpenWakeWord (local, ONNX) |
+| Speech-to-text | faster-whisper (local, Hindi + English) |
+| LLM brain | OpenRouter cloud API (`meta-llama/llama-3.1-8b-instruct`) |
+| Text-to-speech | Piper TTS (local, Hindi male voice) |
+| WhatsApp | pywhatkit → WhatsApp Web |
+| Email | smtplib → Gmail SMTP (App Password auth) |
+| Web search | duckduckgo-search (local DDG API, no browser) |
+| System tray | pystray + Pillow |
 
 ## Phases
 
-1. Setup
-2. Voice round-trip  (done — mic + STT + TTS)
-3. "Hey Jarvis" wake word  (done)
-4. LLM brain  (done)
-5. Skills
-   - **Open-any-app**  (done — offline, see `jarvis/skills/open_app.py`)
-   - WhatsApp messaging  (to do)
-   - Gmail email (subject / To / BCC + AI-written content)  (to do)
-6. Web search + memory  (to do)
-7. Polish + system tray  (to do)
+0. Setup  (done)
+1. Voice round-trip (mic + STT + TTS)  (done)
+2. "Hey Jarvis" wake word + LLM brain  (done)
+3. Skills
+   - **Open-any-app**  (done — offline)
+   - **WhatsApp messaging**  (done — pywhatkit)
+   - **Gmail email**  (done — SMTP)
+4. Web search  (done — DuckDuckGo)
+5. (reserved)
+6. System tray + polish  (done)
 
-## Open-any-app skill
+## Setup: Email (required for email skill)
 
-`jarvis/skills/open_app.py` is a self-contained, offline skill. It recognises
-"open/launch/start/run" commands (plus Hinglish verbs like *kholo* / *chalao*),
-resolves the spoken name to a known app, website, or search, and launches it via
-the Windows shell. Optional "and search for / play ..." queries open a site
-search or a Google search.
+1. Go to https://myaccount.google.com/apppasswords
+2. Create a new App Password (select "Mail" / "Other")
+3. Copy the 16-character password
+4. Edit `.env`:
+   ```
+   EMAIL_USER=you@gmail.com
+   EMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+   ```
 
-Test it without launching anything:
+## Setup: OpenRouter (required for LLM brain)
 
-```powershell
-python -m jarvis.skills.open_app --selftest
-python -m jarvis.skills.open_app --dry-run "open youtube and play despacito"
+1. Sign up at https://openrouter.ai/
+2. Create an API key
+3. Edit `.env`:
+   ```
+   OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+## Contacts
+
+Add yourself and frequent contacts to `resources/contacts.csv`:
+```csv
+name,whatsapp_id,email,relation,notes
+Mom,,mom@example.com,Family,
+Prof Sharma,prof_sharma,sharma@college.edu,Faculty,Project guide
 ```
+
+The WhatsApp ID column stores the contact name as it appears in WhatsApp Web (used for lookup when no explicit phone number is stored).
 
 ## License
 
