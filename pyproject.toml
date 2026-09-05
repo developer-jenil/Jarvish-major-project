@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-voice-assistant"
+version = "0.4.0"
+description = "Hey Jarvis personal voice assistant for Windows (Wake word, Hinglish STT/TTS, LLM brain, and Skills)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Jenil & Team" }
+]
+dependencies = [
+    "sounddevice==0.5.5",
+    "numpy>=1.26.0",
+    "faster-whisper==1.2.1",
+    "piper-tts==1.4.2",
+    "openwakeword==0.6.0",
+    "python-dotenv==1.2.2",
+    "pywhatkit>=5.4",
+    "duckduckgo-search>=6.0",
+    "pystray==0.19.5",
+    "pillow>=10.0.0",
+]
+
+[project.scripts]
+jarvis = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jarvis*", "models*", "resources*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.onnx", "*.json", "*.csv", "*.wav", "*.md"]

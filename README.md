@@ -32,6 +32,15 @@ python -m jarvis.wakeword --download
 
 # Set up your .env file (copy .env.example, fill in the values)
 
+# Run full project health check & test suite verification
+python build_and_verify.py
+
+# Or run unit tests directly
+python -m unittest discover -s tests
+
+# Build distribution packages (.whl and .tar.gz)
+python -m build
+
 # Run the assistant (console mode)
 python main.py
 

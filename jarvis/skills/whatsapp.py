@@ -218,7 +218,7 @@ if __name__ == "__main__":
             ("",                                                 False),
         ]
         for s, expected in samples:
-            handled, msg = try_whatsapp(s)
+            handled, msg = try_whatsapp(s, dry_run=True)
             status = "OK" if handled == expected else "FAIL"
             print(f"  [{status}] {s!r:55} handled={handled}")
         print("[selftest] PASS — whatsapp skill recognises intent.")

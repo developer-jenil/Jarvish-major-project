@@ -22,13 +22,15 @@ The trade-off is a larger ~1.5 GB download and slower transcription on a
 CPU-only PC. If speed matters more than accuracy, switch back to "small".
 """
 
+import os
 import numpy as np
 from faster_whisper import WhisperModel
 
-# Default model size. We use "medium" for much better Hindi/Hinglish
-# accuracy. (Change to "small" for a faster, smaller, less accurate model,
-# or "large-v3" for the most accurate — but that is very slow on CPU.)
-DEFAULT_MODEL_SIZE = "medium"
+# Default model size. Can be overridden with JARVIS_WHISPER_MODEL environment
+# variable (e.g. "small", "medium", "large-v3").
+# We use "small" as default since it is lightweight, runs in ~2s on CPU, and is
+# pre-cached, or "medium" for higher Hindi/Hinglish accuracy.
+DEFAULT_MODEL_SIZE = os.environ.get("JARVIS_WHISPER_MODEL", "small")
 
 # Compute type. "int8" = uses 8-bit integers internally, ~half the RAM,
 # negligible accuracy loss on CPU. If you have a GPU, change to "float16".
@@ -43,13 +45,25 @@ def _get_model() -> WhisperModel:
     """Load Whisper on first call, return cached instance after that."""
     global _model
     if _model is None:
-        print(f"[stt] loading Whisper '{DEFAULT_MODEL_SIZE}' model...")
-        print("[stt] (first run downloads the model — ~1.5 GB, may take a few minutes)")
-        _model = WhisperModel(
-            DEFAULT_MODEL_SIZE,
-            device="cpu",              # change to "cuda" if you have an NVIDIA GPU
-            compute_type=DEFAULT_COMPUTE_TYPE,
-        )
+        target_model = os.environ.get("JARVIS_WHISPER_MODEL", DEFAULT_MODEL_SIZE)
+        print(f"[stt] loading Whisper '{target_model}' model...")
+        print("[stt] (first run downloads the model if not cached)")
+        try:
+            _model = WhisperModel(
+                target_model,
+                device="cpu",              # change to "cuda" if you have an NVIDIA GPU
+                compute_type=DEFAULT_COMPUTE_TYPE,
+            )
+        except Exception as exc:
+            if target_model != "small":
+                print(f"[stt] Warning: failed to load '{target_model}' ({exc}). Falling back to 'small' model...")
+                _model = WhisperModel(
+                    "small",
+                    device="cpu",
+                    compute_type=DEFAULT_COMPUTE_TYPE,
+                )
+            else:
+                raise exc
         print("[stt] model ready")
     return _model
 
