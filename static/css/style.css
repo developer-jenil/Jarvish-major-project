@@ -285,6 +285,44 @@ body {
   background: rgba(0, 242, 254, 0.1);
 }
 
+.voice-selector-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid var(--cyan-border);
+  border-radius: var(--radius-md);
+  transition: var(--transition-fast);
+}
+
+.voice-selector-wrapper:hover {
+  border-color: var(--cyan-bright);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
+}
+
+.voice-select-icon {
+  font-size: 14px;
+}
+
+.voice-select {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-family: var(--font-tech);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  outline: none;
+}
+
+.voice-select option {
+  background: #0d1527;
+  color: #f8fafc;
+  padding: 6px;
+}
+
 .clock-display {
   font-family: var(--font-hud);
   font-size: 13px;
@@ -294,6 +332,46 @@ body {
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(0, 242, 254, 0.15);
   border-radius: var(--radius-md);
+}
+
+/* Silence Countdown Badge */
+.silence-countdown-badge {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px auto 0;
+  padding: 6px 18px;
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  border-radius: 20px;
+  box-shadow: 0 0 16px rgba(244, 63, 94, 0.3);
+  animation: pulseGlow 1.2s infinite alternate;
+  transition: all 0.2s ease;
+  width: fit-content;
+}
+
+.countdown-pulse-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-rose);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--accent-rose);
+  animation: blinkDot 0.8s infinite;
+}
+
+.countdown-text {
+  font-family: var(--font-tech);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--accent-rose);
+  text-transform: uppercase;
+}
+
+@keyframes blinkDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(0.7); }
 }
 
 /* Main Workspace Grid */

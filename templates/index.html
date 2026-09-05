@@ -45,7 +45,7 @@
         <div class="badge" id="badgeTTS">
           <span class="badge-icon">🔊</span>
           <span class="badge-label">TTS</span>
-          <span class="badge-val">PIPER HINDI/EN</span>
+          <span class="badge-val" id="ttsBadgeVal">NATURAL HINGLISH</span>
         </div>
         <div class="badge" id="badgeBrain">
           <span class="badge-icon">🧠</span>
@@ -55,6 +55,15 @@
       </div>
 
       <div class="hud-controls">
+        <div class="voice-selector-wrapper" title="Select JARVIS Spoken Voice">
+          <span class="voice-select-icon">🗣️</span>
+          <select id="voiceEngineSelect" class="voice-select">
+            <option value="edge:hi-IN-MadhurNeural" selected>Madhur (Hinglish Natural 👨)</option>
+            <option value="edge:hi-IN-SwaraNeural">Swara (Hinglish Natural 👩)</option>
+            <option value="edge:en-IN-NeerjaNeural">Neerja (Indian English 👩)</option>
+            <option value="piper:default">Piper (Offline Neural 🤖)</option>
+          </select>
+        </div>
         <button class="toggle-btn" id="wakewordToggleBtn" title="Toggle 'Hey Jarvis' hotword background listener">
           <span class="toggle-icon">⚡</span>
           <span class="toggle-label">HOTWORD: <b id="wakewordStatusText">OFF</b></span>
@@ -101,6 +110,12 @@
               <span class="wave-bar"></span>
               <span class="wave-bar"></span>
             </div>
+          </div>
+
+          <!-- Silence Countdown Badge (visible during 3s speech pause) -->
+          <div class="silence-countdown-badge" id="silenceCountdownBadge">
+            <span class="countdown-pulse-dot"></span>
+            <span class="countdown-text" id="silenceCountdownText">Silence detected: transmitting in 3s...</span>
           </div>
 
           <div class="status-feed">

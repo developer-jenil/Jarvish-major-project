@@ -14,11 +14,13 @@ class TestServer(unittest.TestCase):
         self.client = self.app.test_client()
 
     def test_index_page(self):
-        """GET / should render the dashboard HTML."""
+        """GET / should render the dashboard HTML including voice controls and countdown badge."""
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"J.A.R.V.I.S.", response.data)
         self.assertIn(b"NEURAL OPERATING INTERFACE", response.data)
+        self.assertIn(b"voiceEngineSelect", response.data)
+        self.assertIn(b"silenceCountdownBadge", response.data)
 
     def test_status_endpoint(self):
         """GET /api/status should return system telemetry JSON."""
@@ -29,6 +31,7 @@ class TestServer(unittest.TestCase):
         self.assertIn("models", data)
         self.assertIn("wakeword", data["models"])
         self.assertIn("tts", data["models"])
+        self.assertIn("tts_voices", data)
 
     def test_command_open_app(self):
         """POST /api/command with open app intent should return skill response."""
@@ -84,9 +87,16 @@ class TestServer(unittest.TestCase):
         self.assertIn("contacts", data)
         self.assertIsInstance(data["contacts"], list)
 
-    def test_tts_endpoint(self):
-        """GET /api/tts should stream synthesized WAV audio."""
-        response = self.client.get("/api/tts?text=test")
+    def test_tts_endpoint_edge(self):
+        """GET /api/tts with edge engine should stream synthesized MP3 audio."""
+        response = self.client.get("/api/tts?text=test&engine=edge")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content_type, "audio/mpeg")
+        self.assertGreater(len(response.data), 0)
+
+    def test_tts_endpoint_piper(self):
+        """GET /api/tts with piper engine should stream synthesized WAV audio."""
+        response = self.client.get("/api/tts?text=test&engine=piper")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content_type, "audio/wav")
         # Check standard WAV RIFF header

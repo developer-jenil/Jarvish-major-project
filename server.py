@@ -20,7 +20,14 @@ import numpy as np
 from flask import Flask, jsonify, render_template, request, Response, send_file
 
 from jarvis import brain
-from jarvis.tts import synthesize, speak
+from jarvis.tts import (
+    synthesize,
+    speak,
+    synthesize_edge,
+    clean_text_for_speech,
+    DEFAULT_EDGE_VOICE,
+    AVAILABLE_EDGE_VOICES,
+)
 from jarvis.skills.open_app import try_open_app
 from jarvis.skills.whatsapp import try_whatsapp, find_contact
 from jarvis.skills.email import try_send_email, find_emails
@@ -113,10 +120,12 @@ def get_status():
         "wakeword_active": _wakeword_running,
         "models": {
             "wakeword": "hey_jarvis_v0.1.onnx",
-            "tts": "hi_IN-pratham-medium.onnx",
+            "tts": "edge-neural (Hinglish/English) + piper offline fallback",
             "stt": f"faster-whisper ({os.environ.get('JARVIS_WHISPER_MODEL', 'small')})",
             "brain": brain.DEFAULT_MODEL,
-        }
+        },
+        "tts_voices": AVAILABLE_EDGE_VOICES,
+        "default_voice": DEFAULT_EDGE_VOICE,
     })
 
 
@@ -126,6 +135,8 @@ def execute_command():
     data = request.get_json(force=True) or {}
     text = (data.get("text") or "").strip()
     should_speak = bool(data.get("speak", False))
+    voice = data.get("voice", DEFAULT_EDGE_VOICE)
+    engine = data.get("engine", "edge")
 
     if not text:
         return jsonify({"success": False, "error": "No command text provided"}), 400
@@ -150,12 +161,13 @@ def execute_command():
                 except Exception as e:
                     print(f"[server] tts playback warning: {e}")
 
+            clean_reply = clean_text_for_speech(skill_msg)
             return jsonify({
                 "success": True,
                 "skill": skill_name,
                 "user_text": text,
                 "reply": skill_msg,
-                "audio_url": f"/api/tts?text={urllib.parse.quote(skill_msg)}"
+                "audio_url": f"/api/tts?text={urllib.parse.quote(clean_reply)}&voice={urllib.parse.quote(voice)}&engine={urllib.parse.quote(engine)}"
             })
 
     # 2. LLM Brain
@@ -176,12 +188,13 @@ def execute_command():
         except Exception as e:
             print(f"[server] tts playback warning: {e}")
 
+    clean_reply = clean_text_for_speech(friendly_reply)
     return jsonify({
         "success": True,
         "skill": "brain",
         "user_text": text,
         "reply": friendly_reply,
-        "audio_url": f"/api/tts?text={urllib.parse.quote(friendly_reply)}"
+        "audio_url": f"/api/tts?text={urllib.parse.quote(clean_reply)}&voice={urllib.parse.quote(voice)}&engine={urllib.parse.quote(engine)}"
     })
 
 
@@ -293,14 +306,37 @@ def get_tts_audio():
     if request.method == "POST":
         data = request.get_json(force=True) or {}
         text = data.get("text", "")
+        engine = data.get("engine", "edge")
+        voice = data.get("voice", DEFAULT_EDGE_VOICE)
     else:
         text = request.args.get("text", "")
+        engine = request.args.get("engine", "edge")
+        voice = request.args.get("voice", DEFAULT_EDGE_VOICE)
 
     if not text or not text.strip():
         return jsonify({"error": "No text provided"}), 400
 
+    cleaned = clean_text_for_speech(text)
+    if not cleaned:
+        return jsonify({"error": "No readable speech after cleaning"}), 400
+
+    # 1. Edge-TTS Studio Natural Voice (High quality Hinglish)
+    if engine in ("edge", "auto"):
+        try:
+            mp3_bytes = synthesize_edge(cleaned, voice=voice)
+            if mp3_bytes and len(mp3_bytes) > 0:
+                return send_file(
+                    io.BytesIO(mp3_bytes),
+                    mimetype="audio/mpeg",
+                    as_attachment=False,
+                    download_name="speech.mp3"
+                )
+        except Exception as exc:
+            print(f"[server] edge-tts error, falling back to piper: {exc}")
+
+    # 2. Piper Offline Neural Voice
     try:
-        audio, sample_rate = synthesize(text)
+        audio, sample_rate = synthesize(cleaned)
         if len(audio) == 0:
             return jsonify({"error": "Empty audio generated"}), 400
 

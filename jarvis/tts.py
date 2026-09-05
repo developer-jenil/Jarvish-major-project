@@ -17,6 +17,8 @@ A note on Hindi + English:
   English voice (en_US-lessac-medium is a good one).
 """
 
+import asyncio
+import re
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +30,38 @@ import sounddevice as sd
 VOICE_PATH = Path(__file__).resolve().parent.parent / "models" / "tts" / "hi_IN-pratham-medium.onnx"
 VOICE_CONFIG = VOICE_PATH.with_suffix(".onnx.json")
 
+# Default natural studio voices for Hinglish / Indian English
+DEFAULT_EDGE_VOICE = "hi-IN-MadhurNeural"
+AVAILABLE_EDGE_VOICES = {
+    "hi-IN-MadhurNeural": "Madhur (Hindi / Hinglish Male - Natural)",
+    "hi-IN-SwaraNeural": "Swara (Hindi / Hinglish Female - Natural)",
+    "en-IN-NeerjaNeural": "Neerja (Indian English Female - Natural)",
+    "en-IN-PrabhatNeural": "Prabhat (Indian English Male - Natural)",
+}
+
 # Lazy global — Piper loads in ~2-3 sec. We don't want to do that on
 # every command, so cache the synthesizer.
 _voice = None
+
+
+def clean_text_for_speech(text: str) -> str:
+    """
+    Sanitize text for natural speech synthesis.
+    Strips parenthetical translations e.g. '(Hello! I am Jarvis)',
+    markdown formatting symbols (*, #, _, `, etc.), and collapses whitespace.
+    """
+    if not text:
+        return ""
+    # 1. Remove parenthetical translations or remarks: (text) and [text]
+    cleaned = re.sub(r"\([^)]*\)", "", text)
+    cleaned = re.sub(r"\[[^\]]*\]", "", cleaned)
+    # 2. Remove markdown symbols like bold/italic asterisks, hashes, backticks, tildes
+    cleaned = re.sub(r"[*#_~`]", "", cleaned)
+    # 3. Remove list bullets at start of lines or segments
+    cleaned = re.sub(r"^[\s*+-]+", "", cleaned, flags=re.MULTILINE)
+    # 4. Normalize multiple whitespace and newlines into single spaces
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
 def _get_voice():
@@ -49,27 +80,57 @@ def _get_voice():
     return _voice
 
 
+async def _edge_synthesize_async(text: str, voice: str = DEFAULT_EDGE_VOICE) -> bytes:
+    """Internal helper to stream audio from edge-tts."""
+    import edge_tts
+    comm = edge_tts.Communicate(text, voice)
+    chunks = []
+    async for chunk in comm.stream():
+        if chunk["type"] == "audio":
+            chunks.append(chunk["data"])
+    return b"".join(chunks)
+
+
+def synthesize_edge(text: str, voice: str = DEFAULT_EDGE_VOICE) -> bytes:
+    """
+    Synthesize natural human-like speech using Microsoft Edge neural voices.
+    Returns raw MP3 audio bytes.
+    """
+    cleaned = clean_text_for_speech(text)
+    if not cleaned:
+        return b""
+    try:
+        # Run in new or current asyncio event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # In an already running loop (e.g. some web servers), run via separate thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(lambda: asyncio.run(_edge_synthesize_async(cleaned, voice))).result()
+            else:
+                return loop.run_until_complete(_edge_synthesize_async(cleaned, voice))
+        except RuntimeError:
+            return asyncio.run(_edge_synthesize_async(cleaned, voice))
+    except Exception as exc:
+        print(f"[tts] edge-tts error: {exc}")
+        return b""
+
+
 def synthesize(text: str) -> tuple[np.ndarray, int]:
     """
-    Convert text to audio. Returns (samples, sample_rate).
+    Convert text to audio via local Piper. Returns (samples, sample_rate).
 
     samples is a 1-D float32 numpy array in [-1, 1].
     sample_rate is typically 22050 for this voice.
     """
-    voice = _get_voice()
+    cleaned = clean_text_for_speech(text)
+    if not cleaned:
+        return np.zeros(0, dtype=np.float32), 22050
 
-    # piper-tts 1.4.x (the modern API) made synthesize() a GENERATOR that
-    # yields one AudioChunk per sentence. Each chunk carries its audio as a
-    # float32 array already scaled to [-1, 1] and a matching sample_rate.
-    #
-    # (The old piper 1.x API instead took a wave-file object and wrote
-    # straight into it. Passing a file here would be ignored by the new
-    # API, producing zero frames of audio — i.e. silence.) We consume the
-    # generator and stitch the chunks together.
-    chunks = list(voice.synthesize(text))
+    voice = _get_voice()
+    chunks = list(voice.synthesize(cleaned))
     if not chunks:
-        # No speech produced (empty input). Return silence so callers
-        # (sd.play) don't choke on an empty array.
         return np.zeros(0, dtype=np.float32), voice.config.sample_rate
 
     sample_rate = chunks[0].sample_rate
@@ -86,10 +147,11 @@ def speak(text: str, blocking: bool = True) -> None:
         blocking: if True, wait until playback finishes. If False, return
                   immediately and let it play in the background.
     """
-    if not text or not text.strip():
+    cleaned = clean_text_for_speech(text)
+    if not cleaned:
         return
-    print(f"[tts] speaking: {text!r}")
-    audio, sample_rate = synthesize(text)
+    print(f"[tts] speaking: {cleaned!r}")
+    audio, sample_rate = synthesize(cleaned)
     sd.play(audio, samplerate=sample_rate)
     if blocking:
         sd.wait()
