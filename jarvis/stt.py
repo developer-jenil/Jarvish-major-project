@@ -1,126 +1,202 @@
 """
 jarvis/stt.py — Speech-to-text (the "ears" -> "words" step).
 
-We use faster-whisper, which is a re-implementation of OpenAI's Whisper
-model that's 4x faster and uses less RAM. Same accuracy, just leaner.
+Provides dual-engine STT:
+1. PRIMARY (Ultra-Fast): Groq Whisper Cloud (whisper-large-v3-turbo)
+   - Transcribes 5s of speech in ~0.2-0.3s on Groq LPUs.
+   - Uses the full 3.0 GB large-v3 architecture with 0 MB RAM / disk on PC.
+   - Requires GROQ_API_KEY in .env (free at console.groq.com).
 
-Whisper is a "transformer" model trained on 680,000 hours of audio from
-the internet, with captions. That's how it "knows" what words sound
-like. It supports Hindi natively (the training data included lots of
-Hindi audio) and is great at Hinglish (mixed Hindi + English) because
-that's how Indians actually talk in real recordings.
-
-Model size options (as of 2026):
-  tiny    ~ 75 MB, fastest,  ~70% accuracy
-  base    ~150 MB, fast,     ~75% accuracy
-  small   ~460 MB, balanced, ~82% accuracy
-  medium  ~1.5 GB, slow,     ~86% accuracy  <-- our default (much better Hindi)
-  large   ~3.0 GB, slowest,  ~89% accuracy
-
-We use "medium" for noticeably better Hindi/Hinglish accuracy than "small".
-The trade-off is a larger ~1.5 GB download and slower transcription on a
-CPU-only PC. If speed matters more than accuracy, switch back to "small".
+2. LOCAL FALLBACK (Offline): faster-whisper (CTranslate2)
+   - Runs locally on CPU without internet.
+   - Default model: "small" (~460 MB, ~3-4x faster than "medium" on CPU).
+   - Automatically used when offline or if GROQ_API_KEY is not set.
 """
 
+import io
 import os
+import time
+import wave
 import numpy as np
+import requests
 from faster_whisper import WhisperModel
 
-# Default model size. Can be overridden with JARVIS_WHISPER_MODEL environment
-# variable (e.g. "small", "medium", "large-v3").
-# We use "small" as default since it is lightweight, runs in ~2s on CPU, and is
-# pre-cached, or "medium" for higher Hindi/Hinglish accuracy.
+# Default local model size. Can be overridden with JARVIS_WHISPER_MODEL environment
+# variable (e.g. "small", "base", "medium").
 DEFAULT_MODEL_SIZE = os.environ.get("JARVIS_WHISPER_MODEL", "small")
 
-# Compute type. "int8" = uses 8-bit integers internally, ~half the RAM,
-# negligible accuracy loss on CPU. If you have a GPU, change to "float16".
+# Groq endpoint and model
+GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+DEFAULT_GROQ_MODEL = os.environ.get("JARVIS_GROQ_STT_MODEL", "whisper-large-v3-turbo")
+
+# Compute type for local faster-whisper. "int8" = 8-bit integers, half RAM.
 DEFAULT_COMPUTE_TYPE = "int8"
 
-# Lazy global so we only load the model once. Loading takes 5-30 sec
-# depending on disk + RAM, so we don't want to do it per command.
-_model: WhisperModel | None = None
+# Lazy global so local Whisper is only loaded if needed
+_local_model: WhisperModel | None = None
 
 
-def _get_model() -> WhisperModel:
-    """Load Whisper on first call, return cached instance after that."""
-    global _model
-    if _model is None:
+def load_groq_api_key() -> str | None:
+    """Read the Groq API key from the environment or .env file."""
+    key = os.environ.get("GROQ_API_KEY")
+    if key:
+        return key
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        return os.environ.get("GROQ_API_KEY")
+    except ImportError:
+        return None
+
+
+def get_stt_backend() -> str:
+    """Return description of currently active STT backend."""
+    if load_groq_api_key():
+        return f"Groq Cloud Whisper ({DEFAULT_GROQ_MODEL})"
+    target = os.environ.get("JARVIS_WHISPER_MODEL", DEFAULT_MODEL_SIZE)
+    return f"faster-whisper local ({target})"
+
+
+def _get_local_model() -> WhisperModel:
+    """Load local Whisper on first call, return cached instance after that."""
+    global _local_model
+    if _local_model is None:
         target_model = os.environ.get("JARVIS_WHISPER_MODEL", DEFAULT_MODEL_SIZE)
-        print(f"[stt] loading Whisper '{target_model}' model...")
-        print("[stt] (first run downloads the model if not cached)")
+        print(f"[stt] loading local Whisper '{target_model}' model...")
         try:
-            _model = WhisperModel(
+            _local_model = WhisperModel(
                 target_model,
-                device="cpu",              # change to "cuda" if you have an NVIDIA GPU
+                device="cpu",
                 compute_type=DEFAULT_COMPUTE_TYPE,
             )
         except Exception as exc:
             if target_model != "small":
-                print(f"[stt] Warning: failed to load '{target_model}' ({exc}). Falling back to 'small' model...")
-                _model = WhisperModel(
+                print(f"[stt] Warning: failed to load '{target_model}' ({exc}). Falling back to 'small'...")
+                _local_model = WhisperModel(
                     "small",
                     device="cpu",
                     compute_type=DEFAULT_COMPUTE_TYPE,
                 )
             else:
                 raise exc
-        print("[stt] model ready")
-    return _model
+        print("[stt] local model ready")
+    return _local_model
+
+
+def _audio_to_wav_bytes(audio: np.ndarray, sample_rate: int = 16000) -> bytes:
+    """Convert 1-D int16 audio array to in-memory WAV byte stream."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)  # 16-bit
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio.tobytes())
+    return buf.getvalue()
+
+
+_groq_session: requests.Session | None = None
+
+
+def _get_groq_session() -> requests.Session:
+    global _groq_session
+    if _groq_session is None:
+        _groq_session = requests.Session()
+    return _groq_session
+
+
+def transcribe_groq(audio: np.ndarray, language: str | None = None) -> str | None:
+    """
+    Transcribe audio via Groq Whisper Cloud API in ~0.2 seconds.
+    Returns transcribed string, or None if request fails.
+    """
+    api_key = load_groq_api_key()
+    if not api_key:
+        return None
+
+    # Quick silence check: if audio is pure silence/noise floor, return empty immediately
+    if np.max(np.abs(audio)) < 250:
+        return ""
+
+    try:
+        t0 = time.perf_counter()
+        wav_bytes = _audio_to_wav_bytes(audio, sample_rate=16000)
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+        }
+        files = {
+            "file": ("audio.wav", wav_bytes, "audio/wav"),
+        }
+        data = {
+            "model": DEFAULT_GROQ_MODEL,
+            "response_format": "json",
+            "temperature": 0.0,
+            "prompt": "JARVIS voice assistant, English, Hindi, Hinglish conversational commands.",
+        }
+        if language:
+            data["language"] = language
+
+        session = _get_groq_session()
+        resp = session.post(GROQ_API_URL, headers=headers, files=files, data=data, timeout=12)
+        if resp.status_code == 200:
+            result = resp.json()
+            text = result.get("text", "").strip()
+            elapsed = time.perf_counter() - t0
+            print(f"[stt:groq] ({elapsed:.2f}s) -> {text!r}")
+            return text
+        else:
+            print(f"[stt:groq] HTTP {resp.status_code}: {resp.text}")
+            return None
+    except Exception as exc:
+        print(f"[stt:groq] request failed: {exc}")
+        return None
+
+
+def transcribe_local(audio: np.ndarray, language: str | None = None) -> str:
+    """Transcribe audio using local faster-whisper model on CPU."""
+    model = _get_local_model()
+
+    audio_float = audio.astype(np.float32) / 32768.0
+    segments, info = model.transcribe(
+        audio_float,
+        language=language,
+        beam_size=1,
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=300),
+    )
+    text = " ".join(segment.text.strip() for segment in segments).strip()
+
+    if info.language:
+        try:
+            print(f"[stt:local] detected {info.language} (prob {info.language_probability:.2f})")
+        except UnicodeEncodeError:
+            pass
+    try:
+        print(f"[stt:local] -> {text!r}")
+    except UnicodeEncodeError:
+        print(f"[stt:local] -> {text.encode('ascii', 'backslashreplace').decode()} (Unicode redacted)")
+    return text
 
 
 def transcribe(audio: np.ndarray, language: str | None = None) -> str:
     """
     Transcribe a 1-D int16 numpy array of audio samples into text.
-
-    Args:
-        audio: 1-D int16 numpy array at 16 kHz mono (what audio.record() returns)
-        language: ISO code like "en", "hi". None = auto-detect. We default
-                  to auto-detect so Hinglish works naturally.
-
-    Returns:
-        The transcribed text, lowercased and stripped.
+    Tries Groq Whisper Cloud first for ~0.2s speed; seamlessly falls back
+    to local faster-whisper if Groq key is unset or network fails.
     """
-    model = _get_model()
+    # 1. Try ultra-fast Groq Cloud Whisper if API key is present
+    groq_result = transcribe_groq(audio, language=language)
+    if groq_result is not None:
+        return groq_result
 
-    # faster-whisper wants float32 in [-1, 1], not int16. Whisper handles
-    # the normalization internally but it expects float input.
-    audio_float = audio.astype(np.float32) / 32768.0
-
-    # `beam_size=1` = fastest, slightly less accurate. `beam_size=5` is
-    # the default, ~3x slower. We start at 1 for responsiveness; bump
-    # later if accuracy is poor.
-    segments, info = model.transcribe(
-        audio_float,
-        language=language,
-        beam_size=1,
-        vad_filter=True,           # skip silent parts automatically
-        vad_parameters=dict(
-            min_silence_duration_ms=300,  # treat <300ms gaps as continuous speech
-        ),
-    )
-
-    # Stitch all segments into one string.
-    text = " ".join(segment.text.strip() for segment in segments).strip()
-
-    if info.language:
-        # Windows console (cp1252) can't print Devanagari — guard it.
-        lang_display = info.language
-        try:
-            print(f"[stt] detected language: {lang_display} (prob {info.language_probability:.2f})")
-        except UnicodeEncodeError:
-            print(f"[stt] detected language: {lang_display} (prob {info.language_probability:.2f})")
-    # Same guard for the transcribed text
-    try:
-        print(f"[stt] -> {text!r}")
-    except UnicodeEncodeError:
-        # Print repr-safe version
-        print(f"[stt] -> {text.encode('ascii', 'backslashreplace').decode()} (Unicode chars redacted)")
-    return text
+    # 2. Fall back to local faster-whisper (small model, ~460 MB)
+    return transcribe_local(audio, language=language)
 
 
 if __name__ == "__main__":
-    # Self-test: record 3 seconds and transcribe.
     from jarvis.audio import record
+    print(f"[stt] active backend: {get_stt_backend()}")
     audio = record(seconds=3)
     text = transcribe(audio)
     print(f"\nfinal text: {text!r}")
+

@@ -8,39 +8,38 @@ from". Member 3 owns downloading, versioning, and swapping these.
 
 ---
 
-## 1. Speech-to-Text (STT) — Whisper
+## 1. Speech-to-Text (STT) — Dual Engine (Groq Cloud + Local Whisper)
 
-- **Engine:** `faster-whisper` (a faster re-implementation of OpenAI Whisper)
-- **Model size:** `small` (≈460 MB download on first run)
-- **Languages:** Hindi + English (auto-detected; works well for Hinglish)
-- **Compute:** CPU, `int8` (8-bit) — about half the RAM, runs offline
-- **Where it lives:** downloaded automatically into the HuggingFace cache
-  (`~/.cache/huggingface/`) on first use; no file is committed to the repo
+- **Primary Engine (Ultra-Fast):** Groq Cloud Whisper API (`whisper-large-v3-turbo`)
+  - **Latency:** ~0.2s on Groq LPUs
+  - **Size:** 0 MB local disk / RAM; runs large-v3 architecture on cloud
+  - **Requires:** `GROQ_API_KEY` in `.env` (free at console.groq.com)
+- **Local Fallback Engine (Offline):** `faster-whisper` (CTranslate2)
+  - **Model size:** `small` (≈460 MB pre-cached in `~/.cache/huggingface/`)
+  - **Compute:** CPU, `int8` (8-bit)
+  - **Languages:** Hindi + English (auto-detected; works well for Hinglish)
 - **Loaded by:** `jarvis/stt.py`
-- **Managed by:** Member 3 (chooses model size, triggers download, documents
-  upgrade path to `medium`/`large-v3` for better Hindi)
+- **Managed by:** Member 3
 
-## 2. Text-to-Speech (TTS) — Piper
+## 2. Text-to-Speech (TTS) — Piper + Edge-TTS
 
-- **Engine:** `piper-tts` (a VITS neural TTS)
-- **Voice:** `hi_IN-pratham-medium` (Hindi male speaker; OK on English too)
-- **Model files (committed, see .gitignore exception):**
+- **Engine:** `edge-tts` (natural neural voices) + `piper-tts` (local VITS offline fallback)
+- **Voice:** `hi-IN-MadhurNeural` (Edge) / `hi_IN-pratham-medium` (Piper)
+- **Model files (Piper):**
   - `models/tts/hi_IN-pratham-medium.onnx`
   - `models/tts/hi_IN-pratham-medium.onnx.json`
-- **Sample rate:** 22050 Hz, mono
-- **Runs:** fully offline once the `.onnx` is on disk
+- **Sample rate:** 22050 Hz / 24000 Hz, mono
 - **Loaded by:** `jarvis/tts.py`
-- **Managed by:** Member 3 (picks/adds voices; to switch to pure-English
-  use `en_US-lessac-medium`)
+- **Managed by:** Member 3
 
 ## 3. LLM Brain (cloud)
 
 - **Engine:** OpenRouter Chat Completions API (OpenAI-compatible)
-- **Default model:** `meta-llama/llama-3.1-8b-instruct` (works with current API key, good Hindi+English)
-- **Fallback models:** `openai/gpt-3.5-turbo`, `google/gemma-7b-it`, `mistralai/mistral-7b-instruct`, `meta-llama/llama-3-8b-instruct`
+- **Default model:** `google/gemini-2.5-flash` (ultra-low latency <300ms, excellent reasoning, native Hindi/Hinglish)
+- **Fallback models:** `meta-llama/llama-3.1-8b-instruct`, `openai/gpt-4o-mini`, `google/gemma-7b-it`
 - **Requires:** internet + an API key in `.env` (`OPENROUTER_API_KEY`)
 - **Integrated by:** `jarvis/brain.py` (Member 2's module)
-- **Managed by:** Member 3 tracks which model is active and its limits/cost
+- **Managed by:** Member 3 tracks active models and limits
 
 ## How to add a new resource
 

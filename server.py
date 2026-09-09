@@ -20,6 +20,7 @@ import numpy as np
 from flask import Flask, jsonify, render_template, request, Response, send_file
 
 from jarvis import brain
+from jarvis.stt import get_stt_backend
 from jarvis.tts import (
     synthesize,
     speak,
@@ -137,7 +138,7 @@ def get_status():
         "models": {
             "wakeword": "hey_jarvis_v0.1.onnx",
             "tts": "edge-neural (Hinglish/English) + piper offline fallback",
-            "stt": f"faster-whisper ({os.environ.get('JARVIS_WHISPER_MODEL', 'small')})",
+            "stt": get_stt_backend(),
             "brain": brain.DEFAULT_MODEL,
         },
         "tts_voices": AVAILABLE_EDGE_VOICES,

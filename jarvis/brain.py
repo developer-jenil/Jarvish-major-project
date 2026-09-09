@@ -49,17 +49,15 @@ API_URL = "https://openrouter.ai/api/v1/chat/completions"
 #   "mistralai/mistral-7b-instruct:free"      (FREE, less Hindi)
 #   "microsoft/phi-3-mini-128k-instruct:free" (FREE, smaller context)
 #
-# DEFAULT: meta-llama/llama-3.1-8b-instruct
-#   This model works with the current API key and handles Hindi+English
-#   (Hinglish) well. Falls back to other models if it fails.
-#   Note: The :free suffix models on OpenRouter are currently returning 404;
-#   the non-:free versions work if the account has credits.
-DEFAULT_MODEL = "meta-llama/llama-3.1-8b-instruct"
+# DEFAULT: google/gemini-2.5-flash
+#   Ultra-low latency (<300ms), highly accurate reasoning, and outstanding
+#   Hindi + Hinglish support for spoken conversations.
+DEFAULT_MODEL = "google/gemini-2.5-flash"
 FALLBACK_MODELS = [
-    "openai/gpt-3.5-turbo",
+    "meta-llama/llama-3.1-8b-instruct",
+    "openai/gpt-4o-mini",
     "google/gemma-7b-it",
     "mistralai/mistral-7b-instruct",
-    "meta-llama/llama-3-8b-instruct",
 ]
 
 import datetime

@@ -38,6 +38,33 @@ class TestSTT(unittest.TestCase):
         text = transcribe(silence)
         self.assertIsInstance(text, str)
 
+    def test_transcribe_groq_mock(self):
+        """transcribe_groq should parse Groq response and return text."""
+        from unittest.mock import patch, MagicMock
+        from jarvis.stt import transcribe_groq
+
+        fake_resp = MagicMock()
+        fake_resp.status_code = 200
+        fake_resp.json.return_value = {"text": "Namaste Jarvis open Chrome"}
+
+        with patch("jarvis.stt.load_groq_api_key", return_value="gsk_test123"), \
+             patch("requests.Session.post", return_value=fake_resp):
+            audio = np.ones(16000, dtype=np.int16) * 1000
+            result = transcribe_groq(audio)
+            self.assertEqual(result, "Namaste Jarvis open Chrome")
+
+    def test_transcribe_groq_fallback_when_error(self):
+        """transcribe() falls back to local Whisper when Groq request fails."""
+        from unittest.mock import patch
+        from jarvis.stt import transcribe
+
+        with patch("jarvis.stt.load_groq_api_key", return_value="gsk_test123"), \
+             patch("jarvis.stt.transcribe_groq", return_value=None), \
+             patch("jarvis.stt.transcribe_local", return_value="local fallback text"):
+            audio = np.zeros(16000, dtype=np.int16)
+            result = transcribe(audio)
+            self.assertEqual(result, "local fallback text")
+
 
 if __name__ == "__main__":
     unittest.main()
