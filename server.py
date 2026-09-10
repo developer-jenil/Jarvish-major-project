@@ -523,10 +523,15 @@ def events():
     return Response(event_stream(), mimetype="text/event-stream")
 
 
-def run_server(host="127.0.0.1", port=5000, debug=False):
+def run_server(host=None, port=None, debug=False):
+    if host is None:
+        host = os.environ.get("HOST", "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
+    if port is None:
+        port = int(os.environ.get("PORT", 5000))
+
     print(f"\n==================================================")
     print(f"  JARVIS Web Dashboard Server")
-    print(f"  Access UI at: http://localhost:{port}")
+    print(f"  Access UI at: http://{host}:{port}")
     print(f"==================================================\n")
     app.run(host=host, port=port, debug=debug, use_reloader=False)
 
