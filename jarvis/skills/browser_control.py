@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import urllib.parse
 from typing import Any
@@ -92,6 +93,9 @@ SAFE_URL_SCHEMES = ("http://", "https://")
 
 def get_chrome_path() -> str | None:
     """Find the Chrome executable on Windows using Registry, standard paths, or PATH."""
+    if sys.platform != "win32":
+        return shutil.which("google-chrome") or shutil.which("chrome") or shutil.which("chromium")
+
     # 1. Windows Registry (HKCU / HKLM App Paths)
     try:
         import winreg
@@ -131,6 +135,8 @@ def get_chrome_path() -> str | None:
 
 def get_active_chrome_profile() -> str | None:
     """Find the currently active Chrome profile name (e.g. 'Profile 2' or 'Default') from Local State."""
+    if sys.platform != "win32":
+        return None
     try:
         import json
         from pathlib import Path
@@ -156,14 +162,16 @@ def is_safe_url(url: str) -> bool:
     return low.startswith(SAFE_URL_SCHEMES)
 
 
-def get_desktop_startupinfo() -> subprocess.STARTUPINFO:
+def get_desktop_startupinfo():
     """Create a STARTUPINFO struct targeting the interactive user desktop."""
-    si = subprocess.STARTUPINFO()
-    try:
-        si.lpDesktop = r"WinSta0\Default"
-    except Exception:
-        pass
-    return si
+    if hasattr(subprocess, "STARTUPINFO"):
+        si = subprocess.STARTUPINFO()
+        try:
+            si.lpDesktop = r"WinSta0\Default"
+        except Exception:
+            pass
+        return si
+    return None
 
 
 def launch_on_user_desktop(cmd_line: str) -> bool:
@@ -172,6 +180,8 @@ def launch_on_user_desktop(cmd_line: str) -> bool:
     This ensures GUI windows (Chrome, Notepad, Calc) appear visibly on the user's active screen
     even when the Python server is running under a background task or isolated desktop.
     """
+    if sys.platform != "win32":
+        return False
     if not cmd_line or not cmd_line.strip():
         return False
     cmd_clean = cmd_line.strip()
@@ -197,23 +207,20 @@ def launch_on_user_desktop(cmd_line: str) -> bool:
     # 2. Secondary: Switch thread desktop to WinSta0\\Default and ShellExecuteW
     try:
         import ctypes
-        user32 = ctypes.windll.user32
-        hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
-        if hdesk:
-            user32.SetThreadDesktop(hdesk)
-        ret = ctypes.windll.shell32.ShellExecuteW(None, "open", cmd_clean, None, None, 1)
-        if ret > 32:
-            return True
+        if hasattr(ctypes, "windll"):
+            user32 = ctypes.windll.user32
+            hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+            if hdesk:
+                user32.SetThreadDesktop(hdesk)
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "open", cmd_clean, None, None, 1)
+            if ret > 32:
+                return True
     except Exception as exc:
         print(f"[browser_control] ShellExecuteW fallback error: {exc}")
 
     # 3. Tertiary: Direct subprocess.Popen with WinSta0\\Default startupinfo
     try:
-        si = subprocess.STARTUPINFO()
-        try:
-            si.lpDesktop = r"WinSta0\Default"
-        except Exception:
-            pass
+        si = get_desktop_startupinfo()
         subprocess.Popen(cmd_clean, startupinfo=si, shell=True)
         return True
     except Exception as exc:
@@ -230,8 +237,11 @@ def open_url_in_chrome(url: str, dry_run: bool = False, new_window: bool = True)
 
     _STATE["last_opened_url"] = url
 
-    if dry_run:
-        print(f"[browser_control][dry-run] would open in Chrome (new_window={new_window}): {url}")
+    if dry_run or sys.platform != "win32":
+        if dry_run:
+            print(f"[browser_control][dry-run] would open in Chrome (new_window={new_window}): {url}")
+        else:
+            print(f"[browser_control] registered target URL for client browser: {url}")
         return True
 
     chrome_exe = get_chrome_path() or "chrome.exe"
@@ -291,7 +301,10 @@ def _fetch_search_results(query: str) -> list[dict[str, str]]:
 
     # 1. Try DuckDuckGo
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         with DDGS() as ddgs:
             raw = list(ddgs.text(query, max_results=5))
         for r in raw:

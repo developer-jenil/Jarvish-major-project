@@ -67,7 +67,10 @@ def search_web(query: str, max_results: int = 3) -> list[dict]:
     Each dict has keys: title, body, url.
     """
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         # Normalise to our shape (DDG may vary slightly between versions).

@@ -13,13 +13,20 @@ Provides dual-engine STT:
    - Automatically used when offline or if GROQ_API_KEY is not set.
 """
 
+from __future__ import annotations
+
 import io
 import os
 import time
 import wave
+from typing import Any
+
 import numpy as np
 import requests
-from faster_whisper import WhisperModel
+try:
+    from faster_whisper import WhisperModel
+except (ImportError, OSError):
+    WhisperModel = None
 
 # Default local model size. Can be overridden with JARVIS_WHISPER_MODEL environment
 # variable (e.g. "small", "base", "medium").
@@ -33,7 +40,7 @@ DEFAULT_GROQ_MODEL = os.environ.get("JARVIS_GROQ_STT_MODEL", "whisper-large-v3-t
 DEFAULT_COMPUTE_TYPE = "int8"
 
 # Lazy global so local Whisper is only loaded if needed
-_local_model: WhisperModel | None = None
+_local_model: Any = None
 
 
 def load_groq_api_key() -> str | None:
@@ -53,13 +60,17 @@ def get_stt_backend() -> str:
     """Return description of currently active STT backend."""
     if load_groq_api_key():
         return f"Groq Cloud Whisper ({DEFAULT_GROQ_MODEL})"
+    if WhisperModel is None:
+        return "Web-Speech-API (browser-native, offline faster-whisper not installed)"
     target = os.environ.get("JARVIS_WHISPER_MODEL", DEFAULT_MODEL_SIZE)
     return f"faster-whisper local ({target})"
 
 
-def _get_local_model() -> WhisperModel:
+def _get_local_model() -> Any:
     """Load local Whisper on first call, return cached instance after that."""
     global _local_model
+    if WhisperModel is None:
+        raise RuntimeError("faster-whisper is not installed in this environment.")
     if _local_model is None:
         target_model = os.environ.get("JARVIS_WHISPER_MODEL", DEFAULT_MODEL_SIZE)
         print(f"[stt] loading local Whisper '{target_model}' model...")
@@ -154,7 +165,14 @@ def transcribe_groq(audio: np.ndarray, language: str | None = None) -> str | Non
 
 def transcribe_local(audio: np.ndarray, language: str | None = None) -> str:
     """Transcribe audio using local faster-whisper model on CPU."""
-    model = _get_local_model()
+    if WhisperModel is None:
+        print("[stt] local faster-whisper not installed; cannot transcribe audio.")
+        return ""
+    try:
+        model = _get_local_model()
+    except Exception as e:
+        print(f"[stt] local faster-whisper load failed: {e}")
+        return ""
 
     audio_float = audio.astype(np.float32) / 32768.0
     segments, info = model.transcribe(
@@ -190,6 +208,9 @@ def transcribe(audio: np.ndarray, language: str | None = None) -> str:
         return groq_result
 
     # 2. Fall back to local faster-whisper (small model, ~460 MB)
+    if WhisperModel is None:
+        print("[stt] Voice transcription unavailable in web-only mode without GROQ_API_KEY.")
+        return ""
     return transcribe_local(audio, language=language)
 
 

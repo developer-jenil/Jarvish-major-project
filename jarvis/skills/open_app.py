@@ -44,6 +44,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import urllib.parse
 
 # --- Configuration -------------------------------------------------------
@@ -306,18 +307,27 @@ def resolve_target(name: str) -> tuple[str, str, str | None]:
     return "app", key, None
 
 
-def _get_desktop_startupinfo() -> subprocess.STARTUPINFO:
+def _get_desktop_startupinfo():
     """Create a STARTUPINFO struct targeting the interactive user desktop."""
-    si = subprocess.STARTUPINFO()
-    try:
-        si.lpDesktop = r"WinSta0\Default"
-    except Exception:
-        pass
-    return si
+    if hasattr(subprocess, "STARTUPINFO"):
+        si = subprocess.STARTUPINFO()
+        try:
+            si.lpDesktop = r"WinSta0\Default"
+        except Exception:
+            pass
+        return si
+    return None
 
 
 def _shell_open(target: str, arg: str | None = None) -> bool:
     """Open `target` on Windows on the interactive user desktop."""
+    if sys.platform != "win32":
+        # In a headless/Linux container, local desktop executables cannot be launched
+        target_check = arg if arg is not None else target
+        if not _is_safe_url(target_check):
+            print(f"[open_app] desktop app {target!r} cannot be launched on {sys.platform} in web-only environment")
+            return False
+
     si = _get_desktop_startupinfo()
 
     if arg is not None:
@@ -369,12 +379,14 @@ def _shell_open(target: str, arg: str | None = None) -> bool:
                 return True
             except Exception:
                 pass
-            try:
-                os.startfile(target)
-                return True
-            except OSError as e:
-                print(f"[open_app] could not open URL {target!r}: {e}")
-                return False
+            if hasattr(os, "startfile"):
+                try:
+                    os.startfile(target)
+                    return True
+                except OSError as e:
+                    print(f"[open_app] could not open URL {target!r}: {e}")
+                    return False
+            return False
 
         if _is_safe_app_target(target):
             if target in ("chrome", "google chrome", "crome", "google crome"):
@@ -576,6 +588,8 @@ def try_open_app(text: str, dry_run: bool = False) -> tuple[bool, str]:
         print(f"[open_app][dry-run] would launch app: {value!r}")
         return True, f"Opening {target}."
     if not _shell_open(value):
+        if sys.platform != "win32":
+            return True, f"Desktop application '{target}' cannot be launched in a web-only cloud environment."
         return True, f"Sorry, I could not find {target} on this computer."
     return True, f"Opening {target}."
 

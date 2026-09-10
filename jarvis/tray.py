@@ -29,8 +29,16 @@ from __future__ import annotations
 import os
 import threading
 
-import pystray
-from PIL import Image, ImageDraw
+try:
+    import pystray
+except (ImportError, OSError):
+    pystray = None
+
+try:
+    from PIL import Image, ImageDraw
+except (ImportError, OSError):
+    Image = None
+    ImageDraw = None
 
 # --- Live status ----------------------------------------------------------
 # A thread-safe holder for the current assistant phase, so the tray menu can
@@ -41,6 +49,11 @@ from PIL import Image, ImageDraw
 # module-level shared state, guarded by a lock (status is small, lock is cheap)
 _status = "Idle"
 _status_lock = threading.Lock()
+
+
+def is_tray_available() -> bool:
+    """Return True if system tray support (pystray + Pillow) is installed and usable."""
+    return pystray is not None and Image is not None
 
 
 def report_status(phase: str) -> None:
@@ -61,11 +74,13 @@ def _get_status() -> str:
 
 # --- Icon generation -----------------------------------------------------
 
-def _make_icon(size: int = 64) -> Image.Image:
+def _make_icon(size: int = 64):
     """Draw a simple JARVIS-themed icon (cyan circle on dark background).
 
     Returns a RGBA PIL Image ready for pystray.
     """
+    if Image is None or ImageDraw is None:
+        return None
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     cx, cy = size // 2, size // 2
@@ -114,6 +129,11 @@ def run_tray(main_fn, title: str = "JARVIS"):
     The status menu item reflects the assistant's current phase (set via
     report_status() from the running loop).
     """
+    if pystray is None or Image is None:
+        print("[tray] pystray or Pillow not available in this environment; running in direct console mode.")
+        main_fn()
+        return
+
     def _status_item():
         # pystray renders the menu on demand; return the current status text.
         return f"Status: {_get_status()}"

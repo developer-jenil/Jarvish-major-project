@@ -78,13 +78,17 @@ def download() -> None:
     folder so the project owns its own copy.
     """
     import shutil
-    import openwakeword.utils as u
+    try:
+        import openwakeword.utils as u
+        import openwakeword
+    except (ImportError, OSError):
+        print("[wakeword] openwakeword is not installed in this environment.")
+        return
 
     print("[wakeword] downloading model files (a few MB, one time)...")
     u.download_models(["hey_jarvis"])
 
     # Copy the wakeword model into the project so it is self-contained.
-    import openwakeword
     pkg_models = Path(openwakeword.__file__).parent / "resources" / "models"
     src = pkg_models / "hey_jarvis_v0.1.onnx"
     if src.exists():
@@ -98,7 +102,10 @@ def _get_model():
     """Load the openWakeWord model on first call; cache it after that."""
     global _model
     if _model is None:
-        from openwakeword.model import Model
+        try:
+            from openwakeword.model import Model
+        except (ImportError, OSError):
+            raise RuntimeError("openwakeword is not installed in this environment.")
 
         # Prefer the project-local model file; else use the bundled name.
         if PROJECT_MODEL_PATH.exists():
@@ -124,11 +131,12 @@ def _get_model():
 def _score(preds: dict) -> float:
     """Pull the single wake-word score out of a predict() result dict.
 
-    The dict key depends on how the model was loaded ('hey jarvis' vs
-    'hey_jarvis_v0.1'), so we just take the highest score present — there
-    is only one model loaded, so this is unambiguous.
+    `preds` maps model-name -> score (float in [0, 1]). We only ever load
+    ONE model, so we just take the first value.
     """
-    return max((float(v) for v in preds.values()), default=0.0)
+    for v in preds.values():
+        return float(v)
+    return 0.0
 
 
 def detect(frame: np.ndarray) -> float:
@@ -160,7 +168,12 @@ def listen_for_wakeword(threshold: float = DEFAULT_THRESHOLD) -> bool:
         True when the wake word is detected. (It only returns on success;
         press Ctrl+C to stop waiting.)
     """
-    import sounddevice as sd
+    try:
+        import sounddevice as sd
+    except (ImportError, OSError):
+        sd = None
+    if sd is None:
+        raise RuntimeError("sounddevice is not available in web-only environment (no physical microphone device).")
 
     # Warm up the model BEFORE we open the mic, so the first frames are not
     # delayed by the ~1 sec load time.

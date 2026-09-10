@@ -16,7 +16,10 @@ Audio basics you should know:
 from __future__ import annotations
 
 import numpy as np
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except (ImportError, OSError):
+    sd = None
 
 # Standard speech-recognition sample rate. Don't change this unless you
 # know what you're doing — Whisper was trained on 16 kHz audio.
@@ -39,6 +42,9 @@ def record(seconds: int = DEFAULT_DURATION, sample_rate: int = SAMPLE_RATE) -> n
     add voice-activity-detection so we only record when you're actually
     talking.
     """
+    if sd is None:
+        raise RuntimeError("sounddevice is not available in web-only environment (no physical microphone device).")
+
     # sounddevice wants (frames, channels) for the callback / 1-D for input.
     # We use dtype='int16' so the bytes match what Whisper expects.
     frames = int(seconds * sample_rate)
@@ -110,6 +116,9 @@ def record_until_silence(
     one-off self-tests, and explicit duration needs.
     """
     frames_per_blocksize = _VAD_BLOCKSIZE
+    if sd is None:
+        print("[audio] sounddevice is not available in web-only environment.")
+        return np.zeros(0, dtype=np.int16)
     print(f"[audio] listening until silence (max {max_seconds}s)... speak now")
 
     # We collect raw frames, then trim silence at the end ourselves.
@@ -195,6 +204,9 @@ def save_wav(audio: np.ndarray, path: str, sample_rate: int = SAMPLE_RATE) -> No
 
 def list_input_devices() -> None:
     """Print all available input devices. Helpful for picking the right mic."""
+    if sd is None:
+        print("[audio] sounddevice is not available in web-only environment.")
+        return
     print(sd.query_devices())
 
 

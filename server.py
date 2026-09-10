@@ -112,7 +112,9 @@ def _wakeword_worker():
             if detected and _wakeword_running:
                 _event_queue.put({"type": "wakeword", "message": "Hey Jarvis detected!"})
         except Exception as e:
-            time.sleep(1)
+            print(f"[server] wake-word listener stopped or unavailable: {e}")
+            _wakeword_running = False
+            break
     print("[server] background wake-word listener stopped")
 
 

@@ -22,7 +22,10 @@ import re
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except (ImportError, OSError):
+    sd = None
 
 # Path to the onnx voice model + its json config. We use Path so this
 # works on Windows (backslashes) AND Linux/macOS (forward slashes) without
@@ -68,12 +71,15 @@ def _get_voice():
     """Load the Piper voice on first call."""
     global _voice
     if _voice is None:
+        try:
+            from piper import PiperVoice
+        except (ImportError, OSError):
+            raise RuntimeError("piper-tts is not installed in this environment.")
         if not VOICE_PATH.exists():
             raise FileNotFoundError(
                 f"voice model not found at {VOICE_PATH}. "
                 "Run the download step in the README or Phase 1 task 1.4."
             )
-        from piper import PiperVoice
         print(f"[tts] loading voice from {VOICE_PATH.name}...")
         _voice = PiperVoice.load(str(VOICE_PATH), config_path=str(VOICE_CONFIG))
         print("[tts] voice ready")
@@ -128,7 +134,12 @@ def synthesize(text: str) -> tuple[np.ndarray, int]:
     if not cleaned:
         return np.zeros(0, dtype=np.float32), 22050
 
-    voice = _get_voice()
+    try:
+        voice = _get_voice()
+    except Exception as exc:
+        print(f"[tts] local piper voice unavailable: {exc}")
+        return np.zeros(0, dtype=np.float32), 22050
+
     chunks = list(voice.synthesize(cleaned))
     if not chunks:
         return np.zeros(0, dtype=np.float32), voice.config.sample_rate
@@ -150,8 +161,13 @@ def speak(text: str, blocking: bool = True) -> None:
     cleaned = clean_text_for_speech(text)
     if not cleaned:
         return
+    if sd is None:
+        print(f"[tts] sounddevice not available in web-only environment; skipped hardware playback for: {cleaned!r}")
+        return
     print(f"[tts] speaking: {cleaned!r}")
     audio, sample_rate = synthesize(cleaned)
+    if len(audio) == 0:
+        return
     sd.play(audio, samplerate=sample_rate)
     if blocking:
         sd.wait()
