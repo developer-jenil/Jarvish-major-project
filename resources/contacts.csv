@@ -1,0 +1,6 @@
+name,phone,whatsapp_id,email,relation,notes
+Mom,+919800000001,,mom@example.com,Family,Default recipient for daily updates
+Dad,+919800000002,,dad@example.com,Family,
+Prof Sharma,,prof_sharma,sharma@college.edu,Faculty,Project guide
+John Doe,+919800000004,john_doe,john@example.com,Friend,
+Team Group,,,,team@example.com,Project,Group email for submissions

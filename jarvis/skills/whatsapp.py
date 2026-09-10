@@ -101,12 +101,38 @@ def _looks_like_phone(value: str) -> bool:
     return bool(_PHONE_RE.match(value.strip()))
 
 
+def _ensure_contacts_file() -> None:
+    """Ensure resources/contacts.csv exists on disk with default contacts."""
+    try:
+        from jarvis.skills.email import _ensure_contacts_file as ensure_fn
+        ensure_fn()
+    except Exception:
+        pass
+
+
 def _load_contacts() -> list[dict[str, str]]:
     """Load contacts.csv and return a list of row dicts."""
+    _ensure_contacts_file()
     if not _CONTACTS_PATH.exists():
-        return []
-    with open(_CONTACTS_PATH, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        try:
+            from jarvis.skills.email import DEFAULT_CONTACTS
+            return list(DEFAULT_CONTACTS)
+        except Exception:
+            return []
+    try:
+        with open(_CONTACTS_PATH, newline="", encoding="utf-8") as f:
+            contacts = list(csv.DictReader(f))
+            if contacts:
+                return contacts
+            from jarvis.skills.email import DEFAULT_CONTACTS
+            return list(DEFAULT_CONTACTS)
+    except Exception as exc:
+        print(f"[whatsapp] contacts read error: {exc}")
+        try:
+            from jarvis.skills.email import DEFAULT_CONTACTS
+            return list(DEFAULT_CONTACTS)
+        except Exception:
+            return []
 
 
 def find_contact(contact_name: str) -> str | None:
@@ -121,9 +147,30 @@ def find_contact(contact_name: str) -> str | None:
     """
     contacts = _load_contacts()
     needle = contact_name.strip().lower()
+    # Strip conversational / possessive prefixes: "my mom" -> "mom"
+    needle = re.sub(r"^(?:my|the|mere|meri|mera|apni|apne|our)\s+", "", needle, flags=re.IGNORECASE).strip()
+    if not needle:
+        return None
+
+    synonyms = (needle,)
+    try:
+        from jarvis.skills.email import _RELATION_SYNONYMS
+        synonyms = _RELATION_SYNONYMS.get(needle, (needle,))
+    except Exception:
+        pass
+
     for row in contacts:
-        if needle not in row.get("name", "").lower():
+        name = row.get("name", "").strip().lower()
+        relation = row.get("relation", "").strip().lower()
+
+        matched = False
+        for syn in synonyms:
+            if syn and (syn in name or syn in relation):
+                matched = True
+                break
+        if not matched:
             continue
+
         phone = row.get("phone", "").strip()
         if phone:
             # Normalise: strip spaces/dashes so we emit a clean wa.me link.

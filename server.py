@@ -72,18 +72,33 @@ _event_queue: queue.Queue[dict] = queue.Queue(maxsize=100)
 
 def _load_contacts_list() -> list[dict[str, str]]:
     if not CONTACTS_PATH.exists():
-        return []
+        try:
+            from jarvis.skills.email import _ensure_contacts_file, DEFAULT_CONTACTS
+            _ensure_contacts_file()
+            if not CONTACTS_PATH.exists():
+                return list(DEFAULT_CONTACTS)
+        except Exception:
+            return []
     contacts = []
-    with open(CONTACTS_PATH, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            clean_row = {}
-            for k, v in row.items():
-                key_str = str(k).strip() if k is not None else ""
-                if key_str:
-                    clean_row[key_str] = v.strip() if v is not None else ""
-            if clean_row.get("name"):
-                contacts.append(clean_row)
+    try:
+        with open(CONTACTS_PATH, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                clean_row = {}
+                for k, v in row.items():
+                    key_str = str(k).strip() if k is not None else ""
+                    if key_str:
+                        clean_row[key_str] = v.strip() if v is not None else ""
+                if clean_row.get("name"):
+                    contacts.append(clean_row)
+    except Exception as exc:
+        print(f"[server] contacts read error: {exc}")
+    if not contacts:
+        try:
+            from jarvis.skills.email import DEFAULT_CONTACTS
+            return list(DEFAULT_CONTACTS)
+        except Exception:
+            pass
     return contacts
 
 

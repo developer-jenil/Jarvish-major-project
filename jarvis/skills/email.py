@@ -72,37 +72,150 @@ _TOPIC_MARKERS = re.compile(
 )
 
 
+DEFAULT_CONTACTS: list[dict[str, str]] = [
+    {
+        "name": "Mom",
+        "phone": "+919800000001",
+        "whatsapp_id": "",
+        "email": "mom@example.com",
+        "relation": "Family",
+        "notes": "Default recipient for daily updates",
+    },
+    {
+        "name": "Dad",
+        "phone": "+919800000002",
+        "whatsapp_id": "",
+        "email": "dad@example.com",
+        "relation": "Family",
+        "notes": "",
+    },
+    {
+        "name": "Prof Sharma",
+        "phone": "",
+        "whatsapp_id": "prof_sharma",
+        "email": "sharma@college.edu",
+        "relation": "Faculty",
+        "notes": "Project guide",
+    },
+    {
+        "name": "John Doe",
+        "phone": "+919800000004",
+        "whatsapp_id": "john_doe",
+        "email": "john@example.com",
+        "relation": "Friend",
+        "notes": "",
+    },
+    {
+        "name": "Team Group",
+        "phone": "",
+        "whatsapp_id": "",
+        "email": "team@example.com",
+        "relation": "Project",
+        "notes": "Group email for submissions",
+    },
+]
+
+# Common relation synonyms (English + Hinglish)
+_RELATION_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "mom": ("mom", "mother", "mummy", "maa", "mum", "mataji"),
+    "mother": ("mom", "mother", "mummy", "maa", "mum", "mataji"),
+    "mummy": ("mom", "mother", "mummy", "maa", "mum", "mataji"),
+    "maa": ("mom", "mother", "mummy", "maa", "mum", "mataji"),
+    "dad": ("dad", "father", "papa", "daddy", "pitaji"),
+    "father": ("dad", "father", "papa", "daddy", "pitaji"),
+    "papa": ("dad", "father", "papa", "daddy", "pitaji"),
+    "bro": ("brother", "bhai", "bro"),
+    "brother": ("brother", "bhai", "bro"),
+    "bhai": ("brother", "bhai", "bro"),
+    "sis": ("sister", "behen", "didi", "sis"),
+    "sister": ("sister", "behen", "didi", "sis"),
+}
+
+
+def _clean_recipient_name(raw_name: str) -> str:
+    """Clean conversational / possessive prefixes from a candidate recipient name."""
+    cand = raw_name.strip().strip(".,!?:;\"'")
+    # Remove command verbs if caught
+    cand = re.sub(
+        r"\b(?:bhejo|bhej\s+do|bhej\s+dena|send(?:\s+an?)?|mail|email|likho|compose)\b",
+        "",
+        cand,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Remove leading prepositions if caught: "to alex" -> "alex"
+    cand = re.sub(
+        r"^(?:to|for|ko|se)\s+",
+        "",
+        cand,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Remove possessives and articles: "my mom" -> "mom", "meri mom" -> "mom"
+    cand = re.sub(
+        r"^(?:my|the|mere|meri|mera|apni|apne|our)\s+",
+        "",
+        cand,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cand
+
+
+def _ensure_contacts_file() -> None:
+    """Ensure resources/contacts.csv exists on disk with default contacts."""
+    try:
+        _CONTACTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if not _CONTACTS_PATH.exists() or _CONTACTS_PATH.stat().st_size == 0:
+            fieldnames = ["name", "phone", "whatsapp_id", "email", "relation", "notes"]
+            with open(_CONTACTS_PATH, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(DEFAULT_CONTACTS)
+    except Exception as exc:
+        print(f"[contacts] unable to write default contacts.csv: {exc}")
+
+
 def _load_contacts() -> list[dict[str, str]]:
     """Load contacts.csv and return a list of row dicts."""
+    _ensure_contacts_file()
     if not _CONTACTS_PATH.exists():
-        return []
-    with open(_CONTACTS_PATH, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        return list(DEFAULT_CONTACTS)
+    try:
+        with open(_CONTACTS_PATH, newline="", encoding="utf-8") as f:
+            contacts = list(csv.DictReader(f))
+            return contacts if contacts else list(DEFAULT_CONTACTS)
+    except Exception as exc:
+        print(f"[contacts] read error: {exc}")
+        return list(DEFAULT_CONTACTS)
 
 
 def find_emails(contact_name: str) -> list[str]:
     """Return all email addresses matching `contact_name` from contacts.csv."""
     contacts = _load_contacts()
-    needle = contact_name.strip().lower()
-    results = []
+    needle = _clean_recipient_name(contact_name).lower()
+    if not needle:
+        return []
+
+    synonyms = _RELATION_SYNONYMS.get(needle, (needle,))
+    results: list[str] = []
     for row in contacts:
-        if needle in row.get("name", "").lower():
-            addr = row.get("email", "").strip()
-            if addr and "@" in addr:
-                results.append(addr)
+        name = row.get("name", "").strip().lower()
+        relation = row.get("relation", "").strip().lower()
+        notes = row.get("notes", "").strip().lower()
+        addr = row.get("email", "").strip()
+        if not addr or "@" not in addr:
+            continue
+
+        matched = False
+        for syn in synonyms:
+            if syn and (syn in name or syn in relation or syn in notes):
+                matched = True
+                break
+        if matched and addr not in results:
+            results.append(addr)
     return results
 
 
-def _extract_recipients(text: str) -> tuple[list[str], list[str], list[str]]:
-    """Parse the command text and return (to_list, cc_list, bcc_list).
-
-    Handles:
-      - English prepositions: "send an email to prof sharma and mom about X"
-      - Hinglish postpositions: "mom ko email bhej do ki...", "prof sharma ko mail karo..."
-      - Inverted / verb-first: "bhejo mom ko email ki meeting cancel"
-      - CC / BCC syntax: "mail john cc dad bcc mom that..."
-      - Direct contact name mentions in command prefix
-    """
+def _extract_recipients_and_candidates(text: str) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Parse the command text and return (to_list, cc_list, bcc_list, candidate_names)."""
     # 1. Find where the topic / message begins
     topic_m = _TOPIC_MARKERS.search(text)
     prefix = text[:topic_m.start()] if topic_m else text
@@ -118,10 +231,11 @@ def _extract_recipients(text: str) -> tuple[list[str], list[str], list[str]]:
 
     contacts = _load_contacts()
 
-    def resolve_slot(slot_str: str) -> list[str]:
+    def resolve_slot(slot_str: str) -> tuple[list[str], list[str]]:
         if not slot_str:
-            return []
+            return [], []
         addrs: list[str] = []
+        candidates: list[str] = []
 
         # A. Check for raw literal emails (e.g. user@example.com)
         raw_emails = re.findall(r"[\w\.-]+@[\w\.-]+\.\w+", slot_str)
@@ -132,61 +246,110 @@ def _extract_recipients(text: str) -> tuple[list[str], list[str], list[str]]:
         # B. Check known contacts in contacts.csv
         for r in sorted(contacts, key=lambda c: len(c.get("name", "")), reverse=True):
             cname = r.get("name", "").strip().lower()
-            if not cname:
+            crel = r.get("relation", "").strip().lower()
+            em = r.get("email", "").strip()
+            if not em or "@" not in em:
                 continue
+
             name_tokens = [cname] + [w for w in cname.split() if len(w) > 2]
-            for n in name_tokens:
+            if crel and len(crel) > 2:
+                name_tokens.append(crel)
+
+            # Check synonyms for any token (e.g. mom -> mother, mummy)
+            expanded_tokens = list(name_tokens)
+            for tok in name_tokens:
+                if tok in _RELATION_SYNONYMS:
+                    expanded_tokens.extend(_RELATION_SYNONYMS[tok])
+
+            for n in set(expanded_tokens):
                 if re.search(rf"\b{re.escape(n)}\b", slot_str, re.IGNORECASE):
-                    em = r.get("email", "").strip()
-                    if em and "@" in em and em not in addrs:
+                    if em not in addrs:
                         addrs.append(em)
+                    if r.get("name") and r.get("name") not in candidates:
+                        candidates.append(r.get("name"))
                     break
 
-        # C. Pattern-based fallback (e.g. "<name> ko", "to <name>")
-        if not addrs:
-            # Hindi postposition: "<name> ko" or "<name> se"
-            ko_m = re.search(r"\b([a-zA-Z\s]{2,25})\s+(?:ko|se)\b", slot_str, re.IGNORECASE)
-            if ko_m:
-                cand = ko_m.group(1).strip()
-                cand = re.sub(r"\b(?:bhejo|bhej\s+do|bhej\s+dena|send|mail|email|likho)\b", "", cand, flags=re.IGNORECASE).strip()
-                if cand:
-                    hits = find_emails(cand)
+        def add_candidate(raw: str) -> str:
+            clean = _clean_recipient_name(raw)
+            if not clean or len(clean) < 2:
+                return ""
+            for exist in candidates:
+                if clean.lower() == exist.lower():
+                    return clean
+            candidates.append(clean)
+            return clean
+
+        # C. Pattern-based candidate extraction (e.g. "<name> ko", "to <name>")
+        # Hindi postposition: "<name> ko" or "<name> se"
+        ko_m = re.search(r"\b([a-zA-Z\s]{2,25})\s+(?:ko|se)\b", slot_str, re.IGNORECASE)
+        if ko_m:
+            clean_cand = add_candidate(ko_m.group(1))
+            if clean_cand:
+                hits = find_emails(clean_cand)
+                for h in hits:
+                    if h not in addrs:
+                        addrs.append(h)
+
+        # English preposition: "to <name>" or "for <name>"
+        to_m = re.search(r"\b(?:to|for)\s+([a-zA-Z\s]{2,25})\b", slot_str, re.IGNORECASE)
+        if to_m:
+            clean_cand = add_candidate(to_m.group(1))
+            if clean_cand:
+                hits = find_emails(clean_cand)
+                for h in hits:
+                    if h not in addrs:
+                        addrs.append(h)
+
+        # Direct verb-following: "mail <name>" or "email <name>"
+        direct_m = re.search(r"\b(?:email|mail)\s+([a-zA-Z\s]{2,25})\b", slot_str, re.IGNORECASE)
+        if direct_m:
+            raw_cand = direct_m.group(1).strip()
+            # Avoid picking words like 'about' or 'saying'
+            if not re.match(r"^(?:about|saying|that|regarding|ki)\b", raw_cand, re.IGNORECASE):
+                clean_cand = add_candidate(raw_cand)
+                if clean_cand:
+                    hits = find_emails(clean_cand)
                     for h in hits:
                         if h not in addrs:
                             addrs.append(h)
 
-            # English preposition: "to <name>" or "for <name>"
-            to_m = re.search(r"\b(?:to|for)\s+([a-zA-Z\s]{2,25})\b", slot_str, re.IGNORECASE)
-            if to_m:
-                cand = to_m.group(1).strip()
-                cand = re.sub(r"\b(?:bhejo|bhej\s+do|bhej\s+dena|send|mail|email|likho)\b", "", cand, flags=re.IGNORECASE).strip()
-                if cand:
-                    hits = find_emails(cand)
-                    for h in hits:
-                        if h not in addrs:
-                            addrs.append(h)
+        return addrs, candidates
 
-        return addrs
-
-    to_addrs = resolve_slot(to_text)
-    cc_addrs = resolve_slot(cc_text)
-    bcc_addrs = resolve_slot(bcc_text)
+    to_addrs, to_candidates = resolve_slot(to_text)
+    cc_addrs, cc_candidates = resolve_slot(cc_text)
+    bcc_addrs, bcc_candidates = resolve_slot(bcc_text)
 
     # An email that is already To should not also be in CC
     cc_addrs = [a for a in cc_addrs if a not in to_addrs]
+    all_candidates = to_candidates + cc_candidates + bcc_candidates
+    return to_addrs, cc_addrs, bcc_addrs, all_candidates
+
+
+def _extract_recipients(text: str) -> tuple[list[str], list[str], list[str]]:
+    """Parse the command text and return (to_list, cc_list, bcc_list)."""
+    to_addrs, cc_addrs, bcc_addrs, _ = _extract_recipients_and_candidates(text)
     return to_addrs, cc_addrs, bcc_addrs
 
 
-def _extract_topic(text: str) -> str:
+def _extract_topic(text: str, candidate_names: list[str] | None = None) -> str:
     """Pull out the email topic/body hint from the command text."""
     m = _TOPIC_MARKERS.search(text)
     if m:
         return m.group(1).strip()
-    # Fallback: everything after the first recipient marker.
+
+    # Fallback: text after recipient marker
     idx = _RECIPIENT_MARKERS.search(text)
     if idx:
-        return text[idx.end():].strip()
-    return text.strip()
+        tail = text[idx.end():].strip()
+        cleaned_tail = _clean_recipient_name(tail).lower()
+        cand_lower = [c.lower() for c in (candidate_names or [])]
+        # Also check common family aliases and contact tokens
+        cand_lower.extend(["mom", "dad", "mother", "father", "john", "prof sharma"])
+        if not cleaned_tail or cleaned_tail in cand_lower:
+            return ""  # Only recipient was specified, no explicit topic given
+        return tail
+
+    return ""
 
 
 def try_send_email(text: str, dry_run: bool = False) -> tuple[bool, str]:
@@ -202,18 +365,25 @@ def try_send_email(text: str, dry_run: bool = False) -> tuple[bool, str]:
     if re.search(r"\b(?:body|subject|draft)\b", text, re.IGNORECASE) and re.search(r"\b(?:change|replace|add|remove|delete|badlo|hatao|likho|rakho|from)\b", text, re.IGNORECASE):
         return False, ""
 
-    to_addrs, cc_addrs, bcc_addrs = _extract_recipients(text)
-    topic = _extract_topic(text)
+    to_addrs, cc_addrs, bcc_addrs, candidates = _extract_recipients_and_candidates(text)
+    topic = _extract_topic(text, candidates)
 
     if not to_addrs:
+        if candidates:
+            # Recipient candidate was recognized, but has no email in contacts
+            cand_str = ", ".join(c.title() for c in candidates)
+            return True, (
+                f"I recognized recipient '{cand_str}', but don't have an email address for them in contacts. "
+                f"Please add {cand_str} in the Contacts tab or specify an email address directly."
+            )
         return True, (
-            "I didn't catch who to send the email to. Could you repeat that?"
+            "Who would you like me to send the email to? Please say a contact name or email address."
         )
+
     if not topic:
-        return True, (
-            "I heard you want to send an email, but I didn't catch the topic. "
-            "Could you tell me what it's about?"
-        )
+        # User specified recipient(s) without explicit topic (e.g. "mail to my mom")
+        recip_display = candidates[0].title() if candidates else "you"
+        topic = f"Check-in with {recip_display}"
 
     # Ask the LLM brain to draft subject + body. `body` is given a default
     # FIRST so a reply that lacks a literal "BODY:" line never leaves the

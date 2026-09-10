@@ -111,6 +111,10 @@ class TestSkills(unittest.TestCase):
         """Contacts in resources/contacts.csv should resolve."""
         contact = find_contact("Mom")
         self.assertIsNotNone(contact)
+        self.assertIn("919800000001", contact)
+        # Should also resolve with possessives and relation synonyms
+        self.assertIn("919800000001", find_contact("my mom") or "")
+        self.assertIn("919800000001", find_contact("my mother") or "")
 
     # --- Email Skill Tests ---
     def test_email_intent(self):
@@ -126,6 +130,37 @@ class TestSkills(unittest.TestCase):
         """Email addresses from resources/contacts.csv should resolve."""
         emails = find_emails("prof sharma")
         self.assertIn("sharma@college.edu", emails)
+
+        # Test possessive stripping and relation aliases
+        mom_emails = find_emails("my mom")
+        self.assertIn("mom@example.com", mom_emails)
+        mother_emails = find_emails("my mother")
+        self.assertIn("mom@example.com", mother_emails)
+
+    def test_email_mom_resolution_and_feedback(self):
+        """'mail to my mom' and variants should resolve to mom@example.com with clean feedback."""
+        from jarvis.skills.email import _extract_recipients
+
+        # 1. Recipient extraction
+        to_addrs, _, _ = _extract_recipients("mail to my mom")
+        self.assertIn("mom@example.com", to_addrs)
+
+        to_addrs2, _, _ = _extract_recipients("send a mail to my mom")
+        self.assertIn("mom@example.com", to_addrs2)
+
+        to_addrs3, _, _ = _extract_recipients("send email to my mother")
+        self.assertIn("mom@example.com", to_addrs3)
+
+        # 2. Complete execution in dry-run mode
+        handled, msg = try_send_email("mail to my mom", dry_run=True)
+        self.assertTrue(handled)
+        self.assertIn("Drafted email to mom@example.com", msg)
+
+        # 3. Informative error message when contact is missing from contacts
+        handled, msg = try_send_email("mail to unknownperson", dry_run=True)
+        self.assertTrue(handled)
+        self.assertIn("I recognized recipient 'Unknownperson'", msg)
+        self.assertNotIn("Could you repeat that", msg)
 
     # --- Web Search Skill Tests ---
     def test_web_search_intent(self):
