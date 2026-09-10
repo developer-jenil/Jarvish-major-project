@@ -129,6 +129,25 @@ def get_chrome_path() -> str | None:
     return None
 
 
+def get_active_chrome_profile() -> str | None:
+    """Find the currently active Chrome profile name (e.g. 'Profile 2' or 'Default') from Local State."""
+    try:
+        import json
+        from pathlib import Path
+        local_state_file = Path(os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Local State"))
+        if local_state_file.exists():
+            data = json.loads(local_state_file.read_text(encoding="utf-8"))
+            active_profiles = data.get("profile", {}).get("last_active_profiles", [])
+            if active_profiles and isinstance(active_profiles, list):
+                return active_profiles[-1]
+            last_used = data.get("profile", {}).get("last_used")
+            if last_used:
+                return last_used
+    except Exception as exc:
+        print(f"[browser_control] get_active_chrome_profile error: {exc}")
+    return None
+
+
 def is_safe_url(url: str) -> bool:
     """Check whether a URL is a safe HTTP/HTTPS URL."""
     if not url:
@@ -215,35 +234,53 @@ def open_url_in_chrome(url: str, dry_run: bool = False, new_window: bool = True)
         print(f"[browser_control][dry-run] would open in Chrome (new_window={new_window}): {url}")
         return True
 
-    # 1. Primary: Direct Chrome launch on user's interactive desktop via WMI
     chrome_exe = get_chrome_path() or "chrome.exe"
-    win_flag = "--new-window" if new_window else ""
-    cmd = f'"{chrome_exe}" {win_flag} "{url}"'.strip()
-    if launch_on_user_desktop(cmd):
-        return True
+    profile = get_active_chrome_profile()
 
-    # 2. Secondary: WMI PowerShell Start-Process with URL (uses user's default browser)
-    ps_cmd = f'powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process \'{url}\'"'
-    if launch_on_user_desktop(ps_cmd):
-        return True
-
-    # 3. Tertiary: Direct ShellExecuteW via ctypes
+    # 1. Primary: Launch directly into the user's active Chrome profile window (e.g. Profile 2)
     try:
         import ctypes
-        args = f'--new-window "{url}"' if new_window else f'"{url}"'
-        ret = ctypes.windll.shell32.ShellExecuteW(None, "open", chrome_exe, args, None, 1)
+        if profile:
+            params = f'--profile-directory="{profile}" "{url}"'
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "open", chrome_exe, params, None, 1)
+            if ret > 32:
+                return True
+    except Exception as exc:
+        print(f"[browser_control] ShellExecuteW profile launch error: {exc}")
+
+    # 2. Secondary: Native Windows ShellExecuteW with direct URL
+    try:
+        import ctypes
+        ret = ctypes.windll.shell32.ShellExecuteW(None, "open", chrome_exe, url, None, 1)
         if ret > 32:
+            return True
+        ret2 = ctypes.windll.shell32.ShellExecuteW(None, "open", "chrome.exe", url, None, 1)
+        if ret2 > 32:
             return True
     except Exception as exc:
         print(f"[browser_control] ShellExecuteW chrome error: {exc}")
 
-    # 4. Fallback: os.startfile
+    # 3. Tertiary: Direct execution of Chrome executable with DETACHED_PROCESS
+    if chrome_exe and os.path.exists(chrome_exe):
+        try:
+            DETACHED_PROCESS = 0x00000008
+            args = [chrome_exe]
+            if profile:
+                args.append(f'--profile-directory={profile}')
+            args.append(url)
+            subprocess.Popen(args, shell=False, creationflags=DETACHED_PROCESS)
+            return True
+        except Exception as exc:
+            print(f"[browser_control] Popen chrome_exe error: {exc}")
+
+    # 4. Quaternary: Native os.startfile fallback
     try:
         os.startfile(url)
         return True
     except Exception as exc:
-        print(f"[browser_control] os.startfile warning: {exc}")
-        return False
+        print(f"[browser_control] os.startfile fallback: {exc}")
+
+    return False
 
 
 # --- Background Search Fetcher -------------------------------------------

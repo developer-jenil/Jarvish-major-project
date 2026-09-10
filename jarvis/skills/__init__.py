@@ -27,7 +27,7 @@ Exported:
 from .open_app import try_open_app
 from .datetime_skill import try_datetime
 from .whatsapp import try_whatsapp
-from .email import try_send_email
+from .email import try_send_email, try_edit_email_draft, get_active_draft, set_active_draft, clear_active_draft
 from .web_search import try_web_search
 from .browser_control import try_browser_control, get_chrome_path, open_url_in_chrome
 
@@ -36,6 +36,10 @@ __all__ = [
     "try_datetime",
     "try_whatsapp",
     "try_send_email",
+    "try_edit_email_draft",
+    "get_active_draft",
+    "set_active_draft",
+    "clear_active_draft",
     "try_web_search",
     "try_browser_control",
     "get_chrome_path",

@@ -49,6 +49,7 @@ from jarvis.skills import (
     try_datetime,
     try_whatsapp,
     try_send_email,
+    try_edit_email_draft,
     try_web_search,
     try_browser_control,
 )
@@ -90,6 +91,7 @@ def handle_command(text: str) -> None:
         ("open-app",  try_open_app),
         ("datetime",  try_datetime),
         ("whatsapp",  try_whatsapp),
+        ("email-edit", try_edit_email_draft),
         ("email",     try_send_email),
         ("web-search", try_web_search),
     ):

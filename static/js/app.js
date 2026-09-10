@@ -455,22 +455,16 @@ document.addEventListener("DOMContentLoaded", () => {
       isExecuting = false;
 
       if (data.success) {
-        appendFeedMessage("assistant", data.reply, data.audio_url);
+        appendFeedMessage("assistant", data.reply, data.audio_url, data.open_url);
         if (data.open_url) {
+          updateActiveDraftBar(data.open_url, data.reply);
           try {
-            const autoLink = document.createElement("a");
-            autoLink.href = data.open_url;
-            autoLink.target = "_blank";
-            autoLink.rel = "noopener noreferrer";
-            document.body.appendChild(autoLink);
-            autoLink.click();
-            setTimeout(() => autoLink.remove(), 200);
-          } catch (_) {
-            try {
-              const win = window.open(data.open_url, "_blank");
-              if (win) win.focus();
-            } catch (e) {}
-          }
+            const targetName = (data.skill === "email" || data.skill === "email-edit") ? "jarvis_gmail_compose" : "_blank";
+            const win = window.open(data.open_url, targetName);
+            if (win) win.focus();
+          } catch (_) {}
+        } else if (data.skill === "email-edit" && data.reply && data.reply.toLowerCase().includes("cancelled")) {
+          hideActiveDraftBar();
         }
         playSpokenReply(data.audio_url);
       } else {
@@ -592,8 +586,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // --- Active Draft UI Bar ---
+  const activeDraftBar = document.getElementById("activeDraftBar");
+  const activeDraftBarText = document.getElementById("activeDraftBarText");
+  const activeDraftBarBtn = document.getElementById("activeDraftBarBtn");
+
+  function updateActiveDraftBar(url, desc = "") {
+    if (!activeDraftBar) return;
+    activeDraftBar.style.display = "flex";
+    if (activeDraftBarBtn) {
+      activeDraftBarBtn.href = url;
+    }
+    if (activeDraftBarText) {
+      const cleanDesc = desc.replace(/^Opened Gmail draft to\s+/i, "").replace(/\. You can review.*$/i, "");
+      activeDraftBarText.textContent = cleanDesc ? `Draft: ${cleanDesc.substring(0, 45)}` : "Gmail Draft Ready";
+    }
+  }
+
+  function hideActiveDraftBar() {
+    if (activeDraftBar) activeDraftBar.style.display = "none";
+  }
+
   // --- 6. Conversation Feed ---
-  function appendFeedMessage(role, content, audioUrl = null) {
+  function appendFeedMessage(role, content, audioUrl = null, openUrl = null) {
     const msgDiv = document.createElement("div");
     msgDiv.className = `feed-message ${role}`;
 
@@ -602,12 +617,29 @@ document.addEventListener("DOMContentLoaded", () => {
     const authorName = role === "user" ? "OPERATOR" : "J.A.R.V.I.S.";
 
     let actionHtml = "";
+    const buttons = [];
     if (audioUrl && role === "assistant") {
-      actionHtml = `
-        <div class="msg-actions">
-          <button class="audio-replay-btn" title="Replay voice audio" data-audio="${audioUrl}">🔊 Replay</button>
-        </div>
-      `;
+      buttons.push(`<button class="audio-replay-btn" title="Replay voice audio" data-audio="${audioUrl}">🔊 Replay</button>`);
+    }
+
+    // Determine effective open URL even if openUrl was not explicitly delivered
+    let effectiveOpenUrl = openUrl;
+    if (!effectiveOpenUrl && role === "assistant" && (content.includes("Gmail draft") || content.includes("email body") || content.includes("email subject"))) {
+      const matchTo = content.match(/to\s+([\w\.-]+@[\w\.-]+\.\w+)/i);
+      const matchSubj = content.match(/subject\s+['"]([^'"]+)['"]/i);
+      const recip = matchTo ? matchTo[1] : "";
+      const subj = matchSubj ? matchSubj[1] : "Update";
+      effectiveOpenUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recip)}&su=${encodeURIComponent(subj)}`;
+    }
+
+    if (effectiveOpenUrl && role === "assistant") {
+      const isGmail = effectiveOpenUrl.includes("mail.google.com");
+      const label = isGmail ? "✉️ Open Draft in Gmail" : "🔗 Open Link";
+      buttons.push(`<a href="${effectiveOpenUrl}" target="jarvis_gmail_compose" style="text-decoration:none; padding:6px 12px; background:#00ffc8; border:1px solid #00ffc8; border-radius:4px; color:#031218; font-size:12px; font-weight:700; display:inline-flex; align-items:center; gap:6px; cursor:pointer; box-shadow:0 0 10px rgba(0,255,200,0.35);" title="${label}">${label}</a>`);
+      updateActiveDraftBar(effectiveOpenUrl, content);
+    }
+    if (buttons.length > 0) {
+      actionHtml = `<div class="msg-actions" style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center;">${buttons.join("")}</div>`;
     }
 
     msgDiv.innerHTML = `
@@ -991,4 +1023,21 @@ document.addEventListener("DOMContentLoaded", () => {
   if (micPermissionBanner) {
     micPermissionBanner.addEventListener("click", unlockHandsFreeOnGesture);
   }
+
+  // Live Active Draft Sync Polling (every 2.5s)
+  setInterval(async () => {
+    try {
+      const resp = await fetch("/api/draft");
+      const d = await resp.json();
+      if (d.success && d.draft && d.draft.to && d.draft.to.length > 0) {
+        const to = d.draft.to.join(", ");
+        const su = d.draft.subject || "Quick Note";
+        const body = d.draft.body || "";
+        const draftUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(su)}&body=${encodeURIComponent(body)}`;
+        updateActiveDraftBar(draftUrl, `To: ${to} | ${su}`);
+      } else {
+        hideActiveDraftBar();
+      }
+    } catch (_) {}
+  }, 2500);
 });

@@ -32,7 +32,14 @@ from jarvis.tts import (
 from jarvis.skills.open_app import try_open_app
 from jarvis.skills.datetime_skill import try_datetime
 from jarvis.skills.whatsapp import try_whatsapp, find_contact
-from jarvis.skills.email import try_send_email, find_emails
+from jarvis.skills.email import (
+    try_send_email,
+    try_edit_email_draft,
+    get_active_draft,
+    set_active_draft,
+    clear_active_draft,
+    find_emails,
+)
 from jarvis.skills.web_search import try_web_search, search_web
 from jarvis.skills.browser_control import (
     try_browser_control,
@@ -164,6 +171,7 @@ def execute_command():
         ("open-app", try_open_app),
         ("datetime", try_datetime),
         ("whatsapp", try_whatsapp),
+        ("email-edit", try_edit_email_draft),
         ("email", try_send_email),
         ("web-search", try_web_search),
     ):
@@ -185,6 +193,19 @@ def execute_command():
             # Check if any skill opened a browser / web URL
             browser_state = get_browser_state()
             open_url = browser_state.get("last_opened_url")
+
+            # Guarantee open_url is always present for email draft creation or modification
+            if not open_url and skill_name in ("email", "email-edit"):
+                active_draft = get_active_draft()
+                if active_draft:
+                    params = {
+                        "view": "cm",
+                        "fs": "1",
+                        "to": ", ".join(active_draft.get("to", [])),
+                        "su": active_draft.get("subject", ""),
+                        "body": active_draft.get("body", ""),
+                    }
+                    open_url = f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
 
             resp_data = {
                 "success": True,
@@ -287,6 +308,17 @@ def skill_email():
 
     handled, msg = try_send_email(cmd, dry_run=dry_run)
     return jsonify({"success": handled, "message": msg})
+
+
+@app.route("/api/draft", methods=["GET"])
+def api_get_draft():
+    return jsonify({"success": True, "draft": get_active_draft()})
+
+
+@app.route("/api/draft", methods=["DELETE"])
+def api_delete_draft():
+    clear_active_draft()
+    return jsonify({"success": True, "message": "Email draft discarded"})
 
 
 @app.route("/api/skills/search", methods=["POST"])
